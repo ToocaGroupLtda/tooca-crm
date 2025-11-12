@@ -263,25 +263,28 @@ class _PedidosScreenState extends State<PedidosScreen> {
                             backgroundColor: const Color(0xFFFFCC00),
                             padding: const EdgeInsets.symmetric(vertical: 8),
                             shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10)),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
                           ),
                           icon: const Icon(Icons.picture_as_pdf, color: Colors.black),
-                          label: const Text('PDF',
-                              style: TextStyle(color: Colors.black)),
+                          label: const Text('PDF', style: TextStyle(color: Colors.black)),
                           onPressed: () {
+                            final id = int.tryParse(p['id'].toString()) ?? 0;
+
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (_) => PedidosScreen(
-                                  usuarioId: widget.usuarioId,
+                                builder: (_) => VisualizarPdfScreen(
+                                  pedidoId: id,
                                   empresaId: widget.empresaId,
-                                  plano: widget.plano, // ✅ adicionado
+                                  usuarioId: widget.usuarioId,
+                                  plano: planoUsuario,
                                 ),
                               ),
                             );
-
                           },
                         ),
+
                       ),
                       const SizedBox(width: 8),
                       Expanded(
