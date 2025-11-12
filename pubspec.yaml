@@ -1,0 +1,60 @@
+name: app_tooca_crm
+
+description: CRM Tooca App
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=2.17.0 <3.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.4.0
+  cupertino_icons: ^1.0.2
+  shared_preferences: ^2.2.2
+  url_launcher: ^6.1.11
+  share_plus: ^7.2.1
+  syncfusion_flutter_pdfviewer: ^29.2.11
+  webview_flutter: ^4.13.0
+  path_provider: ^2.1.2
+  open_file: ^3.2.1
+  flutter_pdfview: ^1.3.1
+  connectivity_plus: ^5.0.2
+  intl: ^0.18.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+  flutter_native_splash: ^2.2.10
+  flutter_launcher_icons: ^0.13.1
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/splash.png
+    - assets/icon.png   # <- ícone adicionado aqui
+
+flutter_native_splash:
+  color: "#FFFFFF"                 # Cor de fundo
+  image: assets/splash.png        # Sua imagem centralizada
+  android: true
+  ios: true
+  fullscreen: true                # Fora do android_12
+
+  android_gravity: center         # Centraliza no Android
+  ios_content_mode: scaleAspectFit  # Mantém proporção no iOS
+
+  android_12:
+    image: assets/splash.png
+    icon_background_color: "#FFFFFF"
+
+
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon.png"
+
+

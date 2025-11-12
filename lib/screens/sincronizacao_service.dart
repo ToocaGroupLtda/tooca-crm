@@ -1,0 +1,291 @@
+// =============================================================
+// 🔄 TOOCA CRM - Sincronização de Dados Offline (v4.3 SaaS)
+// -------------------------------------------------------------
+// Compatível com modo offline, multiempresa e estrutura SaaS.
+// Aceita chaves alternativas no JSON para máxima compatibilidade.
+// =============================================================
+
+import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+
+class SincronizacaoService {
+  // ============================================================
+  // 🔁 SINCRONIZAÇÃO COMPLETA (com plano e empresa isolados)
+  // ============================================================
+  static Future<void> sincronizarTudo(
+      BuildContext context,
+      int empresaId,
+      ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final plano = prefs.getString('plano') ?? 'free';
+    int sucesso = 0;
+    int falhas = 0;
+
+    try {
+      final endpoints = {
+        'clientes_offline_$empresaId':
+        'https://app.toocagroup.com.br/api/listar_clientes.php?empresa_id=$empresaId&plano=$plano',
+        'produtos_offline_$empresaId':
+        'https://app.toocagroup.com.br/api/listar_produtos.php?empresa_id=$empresaId&plano=$plano',
+        'tabelas_offline_$empresaId':
+        'https://app.toocagroup.com.br/api/listar_tabelas.php?empresa_id=$empresaId&plano=$plano',
+        'condicoes_offline_$empresaId':
+        'https://app.toocagroup.com.br/api/listar_condicoes.php?empresa_id=$empresaId&plano=$plano',
+      };
+
+      for (final entry in endpoints.entries) {
+        try {
+          final res = await http.get(Uri.parse(entry.value));
+          if (res.statusCode == 200) {
+            await prefs.setString(entry.key, res.body);
+            sucesso++;
+            debugPrint('✅ ${entry.key} sincronizado com sucesso.');
+          } else {
+            falhas++;
+            debugPrint('⚠️ Falha ${entry.key}: ${res.statusCode}');
+          }
+        } catch (e) {
+          debugPrint('❌ Falha ao sincronizar ${entry.key}: $e');
+          falhas++;
+        }
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('🔄 Sincronização concluída. OK: $sucesso | Falhas: $falhas'),
+          backgroundColor: falhas == 0 ? Colors.green : Colors.orange,
+        ),
+      );
+    } on SocketException {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('📴 Sem conexão. Não foi possível sincronizar.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } catch (e) {
+      debugPrint('❌ Erro inesperado: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('❌ Erro inesperado na sincronização.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  // ============================================================
+  // 🕶️ SINCRONIZAÇÃO SILENCIOSA (automática)
+  // ============================================================
+  static Future<void> sincronizarSilenciosamente(int empresaId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final plano = prefs.getString('plano') ?? 'free';
+    final endpoints = {
+      'clientes_offline_$empresaId':
+      'https://app.toocagroup.com.br/api/listar_clientes.php?empresa_id=$empresaId&plano=$plano',
+      'produtos_offline_$empresaId':
+      'https://app.toocagroup.com.br/api/listar_produtos.php?empresa_id=$empresaId&plano=$plano',
+      'tabelas_offline_$empresaId':
+      'https://app.toocagroup.com.br/api/listar_tabelas.php?empresa_id=$empresaId&plano=$plano',
+      'condicoes_offline_$empresaId':
+      'https://app.toocagroup.com.br/api/listar_condicoes.php?empresa_id=$empresaId&plano=$plano',
+    };
+
+    try {
+      for (final entry in endpoints.entries) {
+        final res = await http.get(Uri.parse(entry.value));
+        if (res.statusCode == 200) {
+          await prefs.setString(entry.key, res.body);
+          debugPrint('🤫 Cache atualizado: ${entry.key}');
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ Sincronização silenciosa falhou: $e');
+    }
+  }
+
+  // ============================================================
+  // 📦 CARREGADORES DE DADOS OFFLINE (multiempresa, robustos)
+  // ============================================================
+  static Future<List<dynamic>> carregarClientesOffline(int empresaId) async {
+    return _carregarListaOfflineFlex(
+      'clientes_offline_$empresaId',
+      ['clientes', 'dados', 'lista_clientes'],
+    );
+  }
+
+  static Future<List<dynamic>> carregarProdutosOffline(int empresaId) async {
+    return _carregarListaOfflineFlex(
+      'produtos_offline_$empresaId',
+      ['produtos', 'lista_produtos', 'dados'],
+    );
+  }
+
+  static Future<List<dynamic>> carregarTabelasOffline(int empresaId) async {
+    return _carregarListaOfflineFlex(
+      'tabelas_offline_$empresaId',
+      ['tabelas', 'tabelas_preco', 'dados'],
+    );
+  }
+
+  static Future<List<dynamic>> carregarCondicoesOffline(int empresaId) async {
+    return _carregarListaOfflineFlex(
+      'condicoes_offline_$empresaId',
+      ['condicoes', 'condicoes_pagamento', 'formas_pagto', 'dados'],
+    );
+  }
+
+  // ============================================================
+  // 🧠 Leitura flexível de JSON offline (aceita qualquer campo)
+  // ============================================================
+  static Future<List<dynamic>> _carregarListaOfflineFlex(
+      String chave,
+      List<String> possiveisCampos,
+      ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonString = prefs.getString(chave);
+
+    if (jsonString == null || jsonString.isEmpty) {
+      debugPrint('⚠️ Nenhum cache encontrado para $chave');
+      return [];
+    }
+
+    try {
+      final data = jsonDecode(jsonString);
+      debugPrint('📦 Lendo cache $chave tipo=${data.runtimeType}');
+
+      // Se for lista pura
+      if (data is List) return data;
+
+      // Procura campos conhecidos
+      for (final campo in possiveisCampos) {
+        if (data[campo] is List) {
+          debugPrint('✅ Campo encontrado em $chave: $campo');
+          return List.from(data[campo]);
+        }
+      }
+
+      // Último fallback: qualquer campo que seja lista
+      for (var key in data.keys) {
+        if (data[key] is List) {
+          debugPrint('⚡ Campo alternativo detectado em $chave: $key');
+          return List.from(data[key]);
+        }
+      }
+
+      debugPrint('⚠️ Nenhum campo de lista encontrado em $chave');
+      return [];
+    } catch (e) {
+      debugPrint('❌ Erro ao decodificar $chave: $e');
+      return [];
+    }
+  }
+
+  // ============================================================
+  // 🚀 ENVIO DE PEDIDOS PENDENTES (com chave por empresa)
+  // ============================================================
+  static Future<void> enviarPedidosPendentes(
+      BuildContext context,
+      int usuarioId,
+      int empresaId,
+      ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final plano = prefs.getString('plano') ?? 'free';
+    final chave = 'pedidos_pendentes_$empresaId';
+    final fila = prefs.getStringList(chave) ?? <String>[];
+
+    if (fila.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ Nenhum pedido pendente para enviar.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      return;
+    }
+
+    int enviados = 0;
+    int erros = 0;
+    final enviadosComSucesso = <String>[];
+
+    for (final itemJson in fila) {
+      try {
+        final reg = jsonDecode(itemJson);
+        String tipo = 'novo';
+        int? pedidoIdUpdate;
+        Map<String, dynamic> dados;
+
+        if (reg is Map && reg.containsKey('tipo')) {
+          tipo = (reg['tipo'] ?? 'novo').toString();
+          pedidoIdUpdate = (reg['pedido_id'] is num)
+              ? (reg['pedido_id'] as num).toInt()
+              : int.tryParse('${reg['pedido_id']}');
+          dados = Map<String, dynamic>.from(reg['dados'] ?? {});
+        } else {
+          dados = Map<String, dynamic>.from(reg as Map);
+        }
+
+        final itensList = (dados['itens'] as List<dynamic>? ?? []);
+        final itensJson = itensList.map((it) => {
+          'produto_id': it['produto_id'],
+          'quantidade': it['qtd'] ?? it['quantidade'] ?? 0,
+          'preco_unit': it['preco'] ?? 0,
+          'desconto': it['desconto'] ?? 0,
+          'nome': it['nome'] ?? '',
+          'codigo': it['codigo'] ?? '',
+        }).toList();
+
+        final body = {
+          'usuario_id': '${dados['usuario_id'] ?? usuarioId}',
+          'empresa_id': '$empresaId',
+          'plano': plano,
+          'cliente_id': '${dados['cliente_id'] ?? ''}',
+          'tabela_id': '${dados['tabela_id'] ?? 0}',
+          'cond_pagto_id': '${dados['cond_pagto_id'] ?? ''}',
+          'observacao': '${dados['observacao'] ?? ''}',
+          'itens': jsonEncode(itensJson),
+        };
+
+        if (tipo == 'update' && pedidoIdUpdate != null) {
+          body['pedido_id'] = '$pedidoIdUpdate';
+        }
+
+        final resp = await http.post(
+          Uri.parse('https://app.toocagroup.com.br/api/salvar_pedido.php'),
+          body: body,
+        );
+
+        final data = jsonDecode(resp.body);
+        if (data['status'] == 'ok') {
+          enviadosComSucesso.add(itemJson);
+          enviados++;
+          debugPrint('✅ Pedido sincronizado: ${data['pedido_id']}');
+        } else {
+          erros++;
+          debugPrint('❌ Falha ao enviar: ${data['mensagem'] ?? resp.body}');
+        }
+      } on SocketException {
+        erros++;
+        debugPrint('📴 Sem conexão ao enviar pedido.');
+      } catch (e) {
+        erros++;
+        debugPrint('❌ Erro ao enviar pedido pendente: $e');
+      }
+    }
+
+    // Remove pedidos enviados com sucesso
+    final restante = List<String>.from(fila)
+      ..removeWhere(enviadosComSucesso.contains);
+    await prefs.setStringList(chave, restante);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('📡 Enviados: $enviados | Falhas: $erros'),
+        backgroundColor: erros == 0 ? Colors.green : Colors.orange,
+      ),
+    );
+  }
+}
