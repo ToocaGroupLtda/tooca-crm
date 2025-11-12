@@ -120,12 +120,14 @@ class _PedidosOfflineScreenState extends State<PedidosOfflineScreen> {
       MaterialPageRoute(
         builder: (_) => NovoPedidoScreen(
           usuarioId: widget.usuarioId,
-          empresaId: widget.empresaId, // ✅ passa empresa
+          empresaId: widget.empresaId,
+          plano: 'free', // ✅ passa o plano corretamente
           pedidoId: null,
           isAdmin: false,
           pedidoRascunho: dados,
-          filaIndex: filaIndex, plano: '',
+          filaIndex: filaIndex,
         ),
+
       ),
     );
   }
@@ -180,11 +182,13 @@ class _PedidosOfflineScreenState extends State<PedidosOfflineScreen> {
         builder: (_) => VisualizarPdfScreen.offline(
           pedidoOffline: dados,
           usuarioId: widget.usuarioId,
-          empresaId: widget.empresaId, // ✅ passa empresa
+          empresaId: widget.empresaId,
+          plano: 'free', // ✅ obrigatório
           isAdmin: false,
         ),
       ),
     );
+
   }
 
   // ============================================================

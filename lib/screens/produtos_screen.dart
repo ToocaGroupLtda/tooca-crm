@@ -1,11 +1,27 @@
+// =============================================================
+// 🛒 TOOCA CRM - PRODUTOS SCREEN (v4.5 SaaS Multiempresa)
+// -------------------------------------------------------------
+// - Lista produtos online/offline por empresa
+// - Filtra por plano (free / pro)
+// - Armazena cache local com chave isolada por empresa
+// =============================================================
+
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ProdutosScreen extends StatefulWidget {
-  final int empresaId; // ✅ Campo real
-  const ProdutosScreen({Key? key, required this.empresaId}) : super(key: key);
+  final int usuarioId;
+  final int empresaId;
+  final String plano;
+
+  const ProdutosScreen({
+    Key? key,
+    required this.usuarioId,
+    required this.empresaId,
+    required this.plano,
+  }) : super(key: key);
 
   @override
   State<ProdutosScreen> createState() => _ProdutosScreenState();
@@ -14,7 +30,7 @@ class ProdutosScreen extends StatefulWidget {
 class _ProdutosScreenState extends State<ProdutosScreen> {
   List<Map<String, dynamic>> produtos = [];
   bool carregando = true;
-  String plano = 'free';
+  bool offline = false;
 
   @override
   void initState() {
@@ -22,106 +38,152 @@ class _ProdutosScreenState extends State<ProdutosScreen> {
     carregarProdutos();
   }
 
+  // ============================================================
+  // 🔄 Carrega produtos (tenta online → fallback offline)
+  // ============================================================
   Future<void> carregarProdutos() async {
-    setState(() => carregando = true);
+    setState(() {
+      carregando = true;
+      offline = false;
+    });
+
+    final url = Uri.parse(
+      'https://app.toocagroup.com.br/api/listar_produtos.php'
+          '?empresa_id=${widget.empresaId}&plano=${widget.plano}',
+    );
+
+    debugPrint('🟢 Carregando produtos → empresa=${widget.empresaId}, plano=${widget.plano}');
 
     try {
-      final prefs = await SharedPreferences.getInstance();
-      plano = prefs.getString('plano') ?? 'free';
+      final resp = await http.get(url);
 
-      final url = Uri.parse(
-        'https://app.toocagroup.com.br/api/listar_produtos.php'
-            '?empresa_id=${widget.empresaId}&plano=$plano',
-      );
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(resp.bodyBytes));
 
-      debugPrint('🌐 Buscando produtos de empresa ${widget.empresaId} ($plano)');
-
-      final response = await http.get(url);
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        List<Map<String, dynamic>> lista = [];
 
         if (data['status'] == 'ok' && data['produtos'] is List) {
-          setState(() {
-            produtos = List<Map<String, dynamic>>.from(data['produtos']);
-          });
+          lista = List<Map<String, dynamic>>.from(data['produtos']);
         } else if (data is List) {
-          // caso a API retorne lista pura
-          setState(() {
-            produtos = List<Map<String, dynamic>>.from(data);
-          });
-        } else {
-          debugPrint('⚠️ Estrutura inesperada da API: ${response.body}');
-          setState(() => produtos = []);
+          lista = List<Map<String, dynamic>>.from(data);
         }
+
+        setState(() {
+          produtos = lista;
+          carregando = false;
+        });
+
+        // 🔒 Atualiza cache local
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('produtos_offline_${widget.empresaId}', jsonEncode({'produtos': lista}));
+        debugPrint('💾 Cache atualizado (${lista.length} produtos).');
       } else {
-        debugPrint('⚠️ Erro HTTP ${response.statusCode}');
-        setState(() => produtos = []);
+        debugPrint('⚠️ Erro HTTP ${resp.statusCode}');
+        await carregarOffline();
       }
     } catch (e) {
-      debugPrint('❌ Erro ao carregar produtos: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('📴 Falha de conexão com o servidor.')),
-        );
-      }
+      debugPrint('📴 Falha na conexão: $e');
+      await carregarOffline();
     }
 
     setState(() => carregando = false);
   }
 
+  // ============================================================
+  // 💾 Carrega produtos do cache local
+  // ============================================================
+  Future<void> carregarOffline() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('produtos_offline_${widget.empresaId}');
+    if (raw != null && raw.isNotEmpty) {
+      final data = jsonDecode(raw);
+      final lista = (data['produtos'] ?? []) as List;
+      setState(() {
+        produtos = List<Map<String, dynamic>>.from(lista);
+        offline = true;
+        carregando = false;
+      });
+      debugPrint('📦 Modo offline: ${produtos.length} produtos carregados.');
+    } else {
+      setState(() {
+        produtos = [];
+        offline = true;
+        carregando = false;
+      });
+      debugPrint('⚠️ Nenhum cache encontrado para produtos_offline_${widget.empresaId}');
+    }
+  }
+
+  // ============================================================
+  // 🧱 UI
+  // ============================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       appBar: AppBar(
-        title: Text('Produtos (${plano.toUpperCase()})'),
+        title: Text('Produtos (${widget.plano.toUpperCase()})'),
         backgroundColor: const Color(0xFFFFCC00),
         foregroundColor: Colors.black,
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh, color: Colors.black),
+            tooltip: 'Atualizar produtos',
             onPressed: carregarProdutos,
           ),
         ],
       ),
       body: carregando
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: CircularProgressIndicator(color: Colors.amber))
           : produtos.isEmpty
           ? const Center(child: Text('Nenhum produto encontrado.'))
-          : ListView.builder(
-        padding: const EdgeInsets.all(12),
-        itemCount: produtos.length,
-        itemBuilder: (context, index) {
-          final produto = produtos[index];
-          final codigo = produto['codigo']?.toString() ?? '---';
-          final nome = produto['nome']?.toString() ?? 'Nome não informado';
-          final preco = produto['preco']?.toString() ?? '0,00';
-          final estoque = produto['estoque']?.toString() ?? '-';
+          : Column(
+        children: [
+          if (offline)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 6),
+              child: Text(
+                '📴 Modo offline',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.all(12),
+              itemCount: produtos.length,
+              itemBuilder: (context, index) {
+                final p = produtos[index];
+                final codigo = (p['codigo'] ?? '').toString();
+                final nome = (p['nome'] ?? 'Nome não informado').toString();
+                final preco = (p['preco'] ?? '0,00').toString();
+                final estoque = (p['estoque'] ?? '-').toString();
 
-          return Card(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
+                return Card(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  elevation: 2,
+                  margin: const EdgeInsets.only(bottom: 10),
+                  child: ListTile(
+                    leading: const Icon(Icons.shopping_cart, color: Colors.black54),
+                    title: Text(
+                      nome,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Código: $codigo'),
+                        Text('Preço: R\$ $preco'),
+                        if (widget.plano != 'free') Text('Estoque: $estoque unid.'),
+                      ],
+                    ),
+                  ),
+                );
+              },
             ),
-            elevation: 2,
-            margin: const EdgeInsets.only(bottom: 10),
-            child: ListTile(
-              leading: const Icon(Icons.shopping_cart, color: Colors.black54),
-              title: Text(
-                nome,
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-              ),
-              subtitle: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Código: $codigo'),
-                  Text('Preço: R\$ $preco'),
-                  if (plano != 'free') Text('Estoque: $estoque unid.'),
-                ],
-              ),
-            ),
-          );
-        },
+          ),
+        ],
       ),
     );
   }

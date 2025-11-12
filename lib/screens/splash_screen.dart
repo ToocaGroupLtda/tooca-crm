@@ -27,8 +27,10 @@ class _SplashScreenState extends State<SplashScreen> {
 
     // 🔄 Sincronização automática (em background)
     if (empresaId > 0) {
-      SincronizacaoService.sincronizarSilenciosamente(empresaId);
+      SincronizacaoService.sincronizarSilenciosamente(empresaId, usuarioId ?? 0);
     }
+
+
 
     await Future.delayed(const Duration(milliseconds: 1500)); // pequena transição
 

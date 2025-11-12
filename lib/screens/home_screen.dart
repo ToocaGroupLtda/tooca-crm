@@ -1,19 +1,18 @@
 // =============================================================
-// 🏠 TOOCA CRM - HOME SCREEN (v4.3 SaaS)
+// 🏠 TOOCA CRM - HOME SCREEN (v4.4 SaaS Multiempresa)
 // -------------------------------------------------------------
 // Tela principal: menu, sincronização e acesso rápido aos módulos
 // =============================================================
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+// 🧩 Importação das telas
 import 'package:app_tooca_crm/screens/sincronizar_screen.dart';
 import 'package:app_tooca_crm/screens/pedidos_screen.dart';
-import 'package:app_tooca_crm/screens/produtos_screen.dart';
 import 'package:app_tooca_crm/screens/clientes_screen.dart';
 import 'package:app_tooca_crm/screens/novo_pedido_screen.dart';
 import 'package:app_tooca_crm/screens/login_screen.dart';
-
-
 
 class HomeScreen extends StatefulWidget {
   final int usuarioId;
@@ -48,13 +47,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final empresaId = prefs.getInt('empresa_id') ?? widget.empresaId;
     final plano = prefs.getString('plano') ?? widget.plano;
 
-    debugPrint('🟢 Sessão ativa → usuario=$usuarioId empresa=$empresaId plano=$plano');
+    debugPrint('🟢 Sessão ativa → usuario=$usuarioId | empresa=$empresaId | plano=$plano');
 
     setState(() {
       nomeUsuario = prefs.getString('nome') ?? widget.email.split('@').first;
     });
   }
-
 
   Future<void> sair() async {
     final prefs = await SharedPreferences.getInstance();
@@ -62,7 +60,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (!mounted) return;
 
-    // Retorna para a tela de login
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const LoginScreen()),
           (route) => false,
@@ -91,7 +88,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-
       body: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -109,25 +105,23 @@ class _HomeScreenState extends State<HomeScreen> {
                 crossAxisSpacing: 16,
                 children: [
 
+                  // =====================================================
+                  // 🧾 NOVO PEDIDO
+                  // =====================================================
                   _buildCard(
                     icon: Icons.note_add_outlined,
                     label: 'Novo Pedido',
                     onTap: () async {
                       final prefs = await SharedPreferences.getInstance();
-
-                      // 🔒 Garante que tudo vem salvo corretamente
                       final empresaId = prefs.getInt('empresa_id') ?? widget.empresaId;
                       final usuarioId = prefs.getInt('usuario_id') ?? widget.usuarioId;
                       final plano = prefs.getString('plano') ?? widget.plano;
 
-                      debugPrint('🟢 Novo Pedido → empresa=$empresaId, usuario=$usuarioId, plano=$plano');
+                      debugPrint('🟡 Novo Pedido → empresa=$empresaId | usuario=$usuarioId | plano=$plano');
 
-                      // ✅ Evita crash se algum dado estiver faltando
                       if (empresaId == 0 || usuarioId == 0) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('⚠️ Erro: sessão inválida. Faça login novamente.'),
-                          ),
+                          const SnackBar(content: Text('⚠️ Sessão inválida. Faça login novamente.')),
                         );
                         return;
                       }
@@ -145,10 +139,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     },
                   ),
 
-
-
+                  // =====================================================
+                  // 📋 PEDIDOS
+                  // =====================================================
                   _buildCard(
-                    icon: Icons.add_box_outlined,
+                    icon: Icons.receipt_long,
                     label: 'Pedidos',
                     onTap: () {
                       Navigator.push(
@@ -157,11 +152,17 @@ class _HomeScreenState extends State<HomeScreen> {
                           builder: (_) => PedidosScreen(
                             usuarioId: widget.usuarioId,
                             empresaId: widget.empresaId,
+                            plano: widget.plano, // ✅ adicionado corretamente
                           ),
                         ),
                       );
                     },
                   ),
+
+
+                  // =====================================================
+                  // 👥 CLIENTES
+                  // =====================================================
                   _buildCard(
                     icon: Icons.people_outline,
                     label: 'Clientes',
@@ -179,6 +180,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     },
                   ),
 
+                  // =====================================================
+                  // 🔄 SINCRONIZAR
+                  // =====================================================
                   _buildCard(
                     icon: Icons.sync,
                     label: 'Sincronizar',
@@ -186,7 +190,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => SincronizarScreen(),
+                          builder: (_) => SincronizarScreen(
+                            usuarioId: widget.usuarioId,
+                            empresaId: widget.empresaId,
+                            plano: widget.plano,
+                          ),
                         ),
                       );
                     },
@@ -201,6 +209,9 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // =============================================================
+  // 🔧 CARD PADRÃO
+  // =============================================================
   Widget _buildCard({
     required IconData icon,
     required String label,
@@ -230,7 +241,9 @@ class _HomeScreenState extends State<HomeScreen> {
               Text(
                 label,
                 style: const TextStyle(
-                    fontWeight: FontWeight.w600, color: Colors.black87),
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black87,
+                ),
               ),
             ],
           ),

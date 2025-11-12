@@ -1,8 +1,8 @@
 // =============================================================
-// 📋 TOOCA CRM - Pedidos Screen (v4.3 PRO Visual)
+// 📋 TOOCA CRM - Pedidos Screen (v4.4 SaaS Multiempresa)
 // -------------------------------------------------------------
-// Lista de pedidos com layout limpo, botões organizados
-// e integração total com API SaaS.
+// Lista de pedidos com layout limpo, integração SaaS e parâmetros
+// consistentes (usuarioId, empresaId, plano).
 // =============================================================
 
 import 'dart:convert';
@@ -11,17 +11,18 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
-
 import 'novo_pedido_screen.dart';
 
 class PedidosScreen extends StatefulWidget {
   final int usuarioId;
   final int empresaId;
+  final String plano;
 
   const PedidosScreen({
     Key? key,
     required this.usuarioId,
     required this.empresaId,
+    required this.plano,
   }) : super(key: key);
 
   @override
@@ -31,7 +32,7 @@ class PedidosScreen extends StatefulWidget {
 class _PedidosScreenState extends State<PedidosScreen> {
   List<dynamic> pedidos = [];
   bool carregando = true;
-  String planoUsuario = 'free';
+  late String planoUsuario;
 
   final NumberFormat _moeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
   String formatMoeda(num v) => _moeda.format(v);
@@ -60,10 +61,18 @@ class _PedidosScreenState extends State<PedidosScreen> {
 
   Future<void> carregarPlano() async {
     final prefs = await SharedPreferences.getInstance();
-    planoUsuario = prefs.getString('plano') ?? 'free';
+    planoUsuario = widget.plano.isNotEmpty
+        ? widget.plano
+        : prefs.getString('plano') ?? 'free';
+
+    debugPrint(
+        '🟢 PedidosScreen → usuario=${widget.usuarioId}, empresa=${widget.empresaId}, plano=$planoUsuario');
     await carregarPedidos();
   }
 
+  // =============================================================
+  // 🔄 Carrega pedidos do servidor SaaS
+  // =============================================================
   Future<void> carregarPedidos() async {
     setState(() => carregando = true);
     try {
@@ -79,12 +88,14 @@ class _PedidosScreenState extends State<PedidosScreen> {
       );
 
       final data = jsonDecode(response.body);
-      if (data['status'] == 'ok') {
-        pedidos = data['pedidos'] ?? [];
+      if (data['status'] == 'ok' && data['pedidos'] is List) {
+        setState(() => pedidos = data['pedidos']);
       } else {
-        pedidos = [];
+        setState(() => pedidos = []);
       }
+      debugPrint('📦 ${pedidos.length} pedidos carregados da empresa ${widget.empresaId}');
     } catch (e) {
+      debugPrint('❌ Erro ao carregar pedidos: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('📴 Sem conexão com o servidor.')),
@@ -94,6 +105,9 @@ class _PedidosScreenState extends State<PedidosScreen> {
     if (mounted) setState(() => carregando = false);
   }
 
+  // =============================================================
+  // 🗑️ Excluir pedido
+  // =============================================================
   Future<void> excluirPedido(int pedidoId) async {
     final confirmar = await showDialog<bool>(
       context: context,
@@ -142,6 +156,9 @@ class _PedidosScreenState extends State<PedidosScreen> {
     }
   }
 
+  // =============================================================
+  // ✏️ Abre pedido para edição
+  // =============================================================
   void abrirEdicao(Map<String, dynamic> pedidoJson) {
     Navigator.push<bool>(
       context,
@@ -151,7 +168,7 @@ class _PedidosScreenState extends State<PedidosScreen> {
           empresaId: widget.empresaId,
           plano: planoUsuario,
           pedidoId: int.tryParse(pedidoJson['id'].toString()),
-          pedidoJson: pedidoJson, // ✅ envia os dados completos
+          pedidoJson: pedidoJson,
         ),
       ),
     ).then((sucesso) {
@@ -159,7 +176,9 @@ class _PedidosScreenState extends State<PedidosScreen> {
     });
   }
 
-
+  // =============================================================
+  // 🧱 Interface
+  // =============================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -179,9 +198,8 @@ class _PedidosScreenState extends State<PedidosScreen> {
           ),
         ],
       ),
-
       body: carregando
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: CircularProgressIndicator(color: Colors.amber))
           : pedidos.isEmpty
           ? const Center(child: Text('Nenhum pedido encontrado.'))
           : ListView.builder(
@@ -191,7 +209,8 @@ class _PedidosScreenState extends State<PedidosScreen> {
           final p = pedidos[index];
           final statusStr = (p['status'] ?? '').toString();
           final isFaturado = statusStr.toLowerCase() == 'faturado';
-          final podeEditar = (p['usuario_id'] == widget.usuarioId) || planoUsuario != 'free';
+          final podeEditar =
+              (p['usuario_id'] == widget.usuarioId) || planoUsuario != 'free';
           final total = parseValorHibridoDart(p['total']);
 
           return Card(
@@ -213,14 +232,9 @@ class _PedidosScreenState extends State<PedidosScreen> {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  Text(
-                    'Cliente: ${p['cliente']}',
-                    style: const TextStyle(color: Colors.black87),
-                  ),
-                  Text(
-                    'Total: ${formatMoeda(total)}',
-                    style: const TextStyle(color: Colors.black87),
-                  ),
+                  Text('Cliente: ${p['cliente']}', style: const TextStyle(color: Colors.black87)),
+                  Text('Total: ${formatMoeda(total)}',
+                      style: const TextStyle(color: Colors.black87)),
                   const SizedBox(height: 8),
 
                   Row(
@@ -232,10 +246,8 @@ class _PedidosScreenState extends State<PedidosScreen> {
                         size: 18,
                       ),
                       const SizedBox(width: 6),
-                      Text(
-                        'Status: $statusStr',
-                        style: const TextStyle(color: Colors.black87),
-                      ),
+                      Text('Status: $statusStr',
+                          style: const TextStyle(color: Colors.black87)),
                     ],
                   ),
 
@@ -245,31 +257,29 @@ class _PedidosScreenState extends State<PedidosScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      // =============================================================
-                      // 📄 Botão PDF — agora abre o VisualizarPdfScreen.online
-                      // =============================================================
                       Expanded(
                         child: ElevatedButton.icon(
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFFFFCC00),
                             padding: const EdgeInsets.symmetric(vertical: 8),
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
+                                borderRadius: BorderRadius.circular(10)),
                           ),
                           icon: const Icon(Icons.picture_as_pdf, color: Colors.black),
-                          label: const Text('PDF', style: TextStyle(color: Colors.black)),
+                          label: const Text('PDF',
+                              style: TextStyle(color: Colors.black)),
                           onPressed: () {
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (_) => VisualizarPdfScreen.online(
-                                  pedidoId: int.parse(p['id'].toString()),
+                                builder: (_) => PedidosScreen(
                                   usuarioId: widget.usuarioId,
-                                  isAdmin: true,
+                                  empresaId: widget.empresaId,
+                                  plano: widget.plano, // ✅ adicionado
                                 ),
                               ),
                             );
+
                           },
                         ),
                       ),
@@ -280,11 +290,11 @@ class _PedidosScreenState extends State<PedidosScreen> {
                             backgroundColor: Colors.amber.shade700,
                             padding: const EdgeInsets.symmetric(vertical: 8),
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
+                                borderRadius: BorderRadius.circular(10)),
                           ),
                           icon: const Icon(Icons.edit, color: Colors.black),
-                          label: const Text('Editar', style: TextStyle(color: Colors.black)),
+                          label: const Text('Editar',
+                              style: TextStyle(color: Colors.black)),
                           onPressed: podeEditar ? () => abrirEdicao(p) : null,
                         ),
                       ),
@@ -295,11 +305,11 @@ class _PedidosScreenState extends State<PedidosScreen> {
                             backgroundColor: Colors.red,
                             padding: const EdgeInsets.symmetric(vertical: 8),
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
+                                borderRadius: BorderRadius.circular(10)),
                           ),
                           icon: const Icon(Icons.delete, color: Colors.white),
-                          label: const Text('Excluir', style: TextStyle(color: Colors.white)),
+                          label: const Text('Excluir',
+                              style: TextStyle(color: Colors.white)),
                           onPressed: podeEditar ? () => excluirPedido(p['id']) : null,
                         ),
                       ),

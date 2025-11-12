@@ -1,7 +1,8 @@
 // =============================================================
-// 🔄 TOOCA CRM - Tela de Sincronização (v1.2)
+// 🔄 TOOCA CRM - Tela de Sincronização (v2.0 SaaS Multiempresa)
 // -------------------------------------------------------------
-// Interface visual com status + identificador da sessão
+// Compatível com parâmetros diretos (empresaId, usuarioId, plano)
+// e também com fallback automático via SharedPreferences.
 // =============================================================
 
 import 'package:app_tooca_crm/screens/sincronizacao_service.dart';
@@ -9,7 +10,16 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class SincronizarScreen extends StatefulWidget {
-  const SincronizarScreen({Key? key}) : super(key: key);
+  final int? usuarioId;
+  final int? empresaId;
+  final String? plano;
+
+  const SincronizarScreen({
+    Key? key,
+    this.usuarioId,
+    this.empresaId,
+    this.plano,
+  }) : super(key: key);
 
   @override
   State<SincronizarScreen> createState() => _SincronizarScreenState();
@@ -30,12 +40,14 @@ class _SincronizarScreenState extends State<SincronizarScreen> {
 
   Future<void> _carregarSessao() async {
     final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      empresaId = prefs.getInt('empresa_id') ?? 0;
-      usuarioId = prefs.getInt('usuario_id') ?? 0;
-      plano = prefs.getString('plano') ?? 'free';
-    });
-    debugPrint('🟢 Sessão atual → empresa=$empresaId, usuario=$usuarioId, plano=$plano');
+
+    // Se vierem do widget, prioriza eles
+    empresaId = widget.empresaId ?? prefs.getInt('empresa_id') ?? 0;
+    usuarioId = widget.usuarioId ?? prefs.getInt('usuario_id') ?? 0;
+    plano = widget.plano ?? prefs.getString('plano') ?? 'free';
+
+    setState(() {});
+    debugPrint('🟢 Sessão ativa → empresa=$empresaId, usuario=$usuarioId, plano=$plano');
   }
 
   Future<void> _executarSincronizacao() async {

@@ -145,7 +145,11 @@ class _ClientesScreenState extends State<ClientesScreen> {
     );
 
     if (resultado == true) {
-      await SincronizacaoService.sincronizarSilenciosamente(widget.empresaId);
+      await SincronizacaoService.sincronizarSilenciosamente(
+        widget.empresaId,
+        widget.usuarioId,
+      );
+
       await carregarClientes();
     }
   }

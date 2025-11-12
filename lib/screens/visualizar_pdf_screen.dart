@@ -1,5 +1,10 @@
+// =============================================================
+// 📄 TOOCA CRM - Visualizar PDF (v4.4 SaaS Multiempresa)
+// -------------------------------------------------------------
+// Compatível com modo online/offline e parâmetros multiempresa.
+// =============================================================
+
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -8,37 +13,44 @@ import 'package:share_plus/share_plus.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 
 class VisualizarPdfScreen extends StatefulWidget {
-  final int? pedidoId; // Modo online
-  final Map<String, dynamic>? pedidoOffline; // Modo offline
-  final int? usuarioId;
+  final int? pedidoId;
+  final Map<String, dynamic>? pedidoOffline;
+  final int empresaId;
+  final int usuarioId;
+  final String plano;
   final bool isAdmin;
   final void Function(BuildContext context, Map<String, dynamic> pedidoOffline)? onEditarOffline;
 
   const VisualizarPdfScreen({
     Key? key,
-    required int pedidoId,
-    this.usuarioId,
+    required this.pedidoId,
+    required this.empresaId,
+    required this.usuarioId,
+    required this.plano,
     this.isAdmin = false,
+    this.pedidoOffline,
     this.onEditarOffline,
-  })  : pedidoId = pedidoId,
-        pedidoOffline = null,
-        super(key: key);
+  }) : super(key: key);
 
   const VisualizarPdfScreen.online({
     Key? key,
     required this.pedidoId,
-    this.usuarioId,
+    required this.empresaId,
+    required this.usuarioId,
+    required this.plano,
     this.isAdmin = false,
-    this.onEditarOffline,
   })  : pedidoOffline = null,
+        onEditarOffline = null,
         super(key: key);
 
   const VisualizarPdfScreen.offline({
     Key? key,
     required this.pedidoOffline,
-    this.usuarioId,
+    required this.empresaId,
+    required this.usuarioId,
+    required this.plano,
     this.isAdmin = false,
-    this.onEditarOffline, required int empresaId,
+    this.onEditarOffline,
   })  : pedidoId = null,
         super(key: key);
 
@@ -51,24 +63,14 @@ class VisualizarPdfScreen extends StatefulWidget {
 class _VisualizarPdfScreenState extends State<VisualizarPdfScreen> {
   String? localPdfPath;
   bool carregando = true;
-  int empresaId = 0;
-  String plano = 'free';
 
   @override
   void initState() {
     super.initState();
-    _initEmpresa();
-  }
-
-  Future<void> _initEmpresa() async {
-    final prefs = await SharedPreferences.getInstance();
-    empresaId = prefs.getInt('empresa_id') ?? 0;
-    plano = prefs.getString('plano') ?? 'free';
-
     if (widget.isOffline) {
       setState(() => carregando = false);
     } else {
-      await carregarPdf();
+      carregarPdf();
     }
   }
 
@@ -82,10 +84,11 @@ class _VisualizarPdfScreenState extends State<VisualizarPdfScreen> {
       final url =
           'https://app.toocagroup.com.br/api/gerar_pdf.php'
           '?id=${widget.pedidoId}'
-          '&empresa_id=$empresaId'
-          '&usuario_id=${widget.usuarioId ?? 0}'
-          '&plano=$plano';
-      ;
+          '&empresa_id=${widget.empresaId}'
+          '&usuario_id=${widget.usuarioId}'
+          '&plano=${widget.plano}';
+
+      debugPrint('📄 Gerando PDF → $url');
 
       final response = await http.get(Uri.parse(url));
 
@@ -104,7 +107,7 @@ class _VisualizarPdfScreenState extends State<VisualizarPdfScreen> {
           carregando = false;
         });
       } else {
-        throw Exception('Erro HTTP: ${response.statusCode}');
+        throw Exception('Erro HTTP ${response.statusCode}');
       }
     } catch (e) {
       debugPrint('❌ Erro ao carregar PDF: $e');
@@ -120,16 +123,15 @@ class _VisualizarPdfScreenState extends State<VisualizarPdfScreen> {
   Future<void> compartilharPdf() async {
     if (widget.isOffline) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Pedido offline: gere e envie quando estiver online.'),
-        ),
+        const SnackBar(content: Text('📴 Pedido offline: gere o PDF quando estiver online.')),
       );
       return;
     }
+
     if (localPdfPath != null) {
       await Share.shareXFiles(
         [XFile(localPdfPath!)],
-        text: 'Segue o pedido em PDF.',
+        text: '📄 Pedido #${widget.pedidoId} - Tooca CRM',
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -141,6 +143,7 @@ class _VisualizarPdfScreenState extends State<VisualizarPdfScreen> {
   @override
   Widget build(BuildContext context) {
     final offline = widget.isOffline;
+
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       appBar: AppBar(
@@ -150,18 +153,25 @@ class _VisualizarPdfScreenState extends State<VisualizarPdfScreen> {
         actions: [
           if (!offline)
             IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: carregarPdf,
+              tooltip: 'Atualizar PDF',
+            ),
+          if (!offline)
+            IconButton(
               icon: const Icon(Icons.share),
               onPressed: compartilharPdf,
+              tooltip: 'Compartilhar PDF',
             ),
         ],
       ),
       body: carregando
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: CircularProgressIndicator(color: Colors.amber))
           : offline
           ? _buildOfflineBody(context)
           : (localPdfPath != null
           ? SfPdfViewer.file(File(localPdfPath!))
-          : const Center(child: Text('Falha ao carregar PDF'))),
+          : const Center(child: Text('Falha ao carregar PDF.'))),
     );
   }
 
@@ -169,8 +179,7 @@ class _VisualizarPdfScreenState extends State<VisualizarPdfScreen> {
     final pedido = widget.pedidoOffline ?? {};
     final clienteNome =
     (pedido['cliente_nome'] ?? pedido['cliente'] ?? 'Cliente não informado').toString();
-    final total =
-    (pedido['total'] ?? pedido['valor_total'] ?? 0).toString();
+    final total = (pedido['total'] ?? pedido['valor_total'] ?? 0).toString();
 
     return Padding(
       padding: const EdgeInsets.all(16),
