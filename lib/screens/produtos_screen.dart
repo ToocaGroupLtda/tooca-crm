@@ -1,15 +1,19 @@
 // =============================================================
-// 🛒 TOOCA CRM - PRODUTOS SCREEN (v4.5 SaaS Multiempresa)
+// 🛒 TOOCA CRM - PRODUTOS SCREEN (v4.8 SaaS MULTIEMPRESA + BLOQUEIO)
 // -------------------------------------------------------------
-// - Lista produtos online/offline por empresa
-// - Filtra por plano (free / pro)
-// - Armazena cache local com chave isolada por empresa
+// ✔ Verifica empresaAtivaLocal() antes de tudo
+// ✔ Consulta SaaS ao entrar e ao atualizar
+// ✔ Bloqueia imediatamente se expirada / inativa
+// ✔ Carrega online → fallback offline
+// ✔ Cache separado por empresa
 // =============================================================
 
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'sincronizacao_service.dart';
 
 class ProdutosScreen extends StatefulWidget {
   final int usuarioId;
@@ -35,6 +39,36 @@ class _ProdutosScreenState extends State<ProdutosScreen> {
   @override
   void initState() {
     super.initState();
+    _validarAntesDeCarregar();
+  }
+
+  // ============================================================
+  // 🔐 VALIDAÇÃO COMPLETA (Local + SaaS)
+  // ============================================================
+  Future<void> _validarAntesDeCarregar() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // 1️⃣ LOCAL
+    if (!await SincronizacaoService.empresaAtivaLocal()) {
+      SincronizacaoService.irParaBloqueio(
+        prefs.getString('plano_empresa') ?? 'free',
+        prefs.getString('empresa_expira') ?? '',
+      );
+      return;
+    }
+
+    // 2️⃣ CONSULTA REAL
+    await SincronizacaoService.consultarStatusEmpresa();
+
+    // 3️⃣ LOCAL DE NOVO
+    if (!await SincronizacaoService.empresaAtivaLocal()) {
+      SincronizacaoService.irParaBloqueio(
+        prefs.getString('plano_empresa') ?? 'free',
+        prefs.getString('empresa_expira') ?? '',
+      );
+      return;
+    }
+
     carregarProdutos();
   }
 
@@ -49,10 +83,10 @@ class _ProdutosScreenState extends State<ProdutosScreen> {
 
     final url = Uri.parse(
       'https://app.toocagroup.com.br/api/listar_produtos.php'
-          '?empresa_id=${widget.empresaId}&plano=${widget.plano}',
+          '?empresa_id=${widget.empresaId}&usuario_id=${widget.usuarioId}&plano=${widget.plano}',
     );
 
-    debugPrint('🟢 Carregando produtos → empresa=${widget.empresaId}, plano=${widget.plano}');
+    debugPrint('🟡 Produtos → empresa=${widget.empresaId} plano=${widget.plano}');
 
     try {
       final resp = await http.get(url);
@@ -71,11 +105,16 @@ class _ProdutosScreenState extends State<ProdutosScreen> {
         setState(() {
           produtos = lista;
           carregando = false;
+          offline = false;
         });
 
-        // 🔒 Atualiza cache local
+        // 📌 Atualiza cache
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('produtos_offline_${widget.empresaId}', jsonEncode({'produtos': lista}));
+        await prefs.setString(
+          'produtos_offline_${widget.empresaId}',
+          jsonEncode({'produtos': lista}),
+        );
+
         debugPrint('💾 Cache atualizado (${lista.length} produtos).');
       } else {
         debugPrint('⚠️ Erro HTTP ${resp.statusCode}');
@@ -95,22 +134,25 @@ class _ProdutosScreenState extends State<ProdutosScreen> {
   Future<void> carregarOffline() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString('produtos_offline_${widget.empresaId}');
+
     if (raw != null && raw.isNotEmpty) {
       final data = jsonDecode(raw);
       final lista = (data['produtos'] ?? []) as List;
+
       setState(() {
         produtos = List<Map<String, dynamic>>.from(lista);
         offline = true;
         carregando = false;
       });
-      debugPrint('📦 Modo offline: ${produtos.length} produtos carregados.');
+
+      debugPrint('📦 Offline: ${produtos.length} produtos carregados.');
     } else {
       setState(() {
         produtos = [];
         offline = true;
         carregando = false;
       });
-      debugPrint('⚠️ Nenhum cache encontrado para produtos_offline_${widget.empresaId}');
+      debugPrint('⚠️ Nenhum cache encontrado.');
     }
   }
 
@@ -128,8 +170,7 @@ class _ProdutosScreenState extends State<ProdutosScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh, color: Colors.black),
-            tooltip: 'Atualizar produtos',
-            onPressed: carregarProdutos,
+            onPressed: _validarAntesDeCarregar,
           ),
         ],
       ),
@@ -142,10 +183,8 @@ class _ProdutosScreenState extends State<ProdutosScreen> {
           if (offline)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 6),
-              child: Text(
-                '📴 Modo offline',
-                style: TextStyle(color: Colors.grey),
-              ),
+              child: Text('📴 Modo offline',
+                  style: TextStyle(color: Colors.grey)),
             ),
           Expanded(
             child: ListView.builder(
@@ -154,7 +193,8 @@ class _ProdutosScreenState extends State<ProdutosScreen> {
               itemBuilder: (context, index) {
                 final p = produtos[index];
                 final codigo = (p['codigo'] ?? '').toString();
-                final nome = (p['nome'] ?? 'Nome não informado').toString();
+                final nome =
+                (p['nome'] ?? 'Nome não informado').toString();
                 final preco = (p['preco'] ?? '0,00').toString();
                 final estoque = (p['estoque'] ?? '-').toString();
 
@@ -165,17 +205,20 @@ class _ProdutosScreenState extends State<ProdutosScreen> {
                   elevation: 2,
                   margin: const EdgeInsets.only(bottom: 10),
                   child: ListTile(
-                    leading: const Icon(Icons.shopping_cart, color: Colors.black54),
+                    leading: const Icon(Icons.shopping_cart,
+                        color: Colors.black54),
                     title: Text(
                       nome,
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 15),
                     ),
                     subtitle: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text('Código: $codigo'),
                         Text('Preço: R\$ $preco'),
-                        if (widget.plano != 'free') Text('Estoque: $estoque unid.'),
+                        if (widget.plano != 'free')
+                          Text('Estoque: $estoque unid.'),
                       ],
                     ),
                   ),

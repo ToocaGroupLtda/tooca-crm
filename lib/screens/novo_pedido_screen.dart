@@ -160,7 +160,9 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
 
     if (condicoes.isEmpty && _isOnline) {
       try {
-        final url = Uri.parse('https://app.toocagroup.com.br/api/condicoes_pagamento.php?empresa_id=${widget.empresaId}');
+        final url = Uri.parse(
+            'https://app.toocagroup.com.br/api/listar_condicoes.php?empresa_id=${widget.empresaId}&usuario_id=${widget.usuarioId}&plano=${widget.plano}'
+        );
         final res = await http.get(url);
         final data = jsonDecode(res.body);
         if (data['status'] == 'ok') {
@@ -185,18 +187,22 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
       return p;
     }).toList();
 
-    // --- Verifica se há dados mínimos ---
+    // --- Verifica se há dados mínimos, mas NÃO bloqueia mais ---
     if (clientes.isEmpty || tabelas.isEmpty || condicoes.isEmpty || produtos.isEmpty) {
-      debugPrint('⚠️ Dados offline incompletos: '
-          'clientes=${clientes.length}, tabelas=${tabelas.length}, '
-          'condicoes=${condicoes.length}, produtos=${produtos.length}');
+      debugPrint(
+          '⚠️ Dados incompletos, liberando tela: '
+              'clientes=${clientes.length}, '
+              'tabelas=${tabelas.length}, '
+              'condicoes=${condicoes.length}, '
+              'produtos=${produtos.length}');
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('⚠️ Dados offline incompletos. Faça a sincronização novamente.'),
+          content: Text('⚠️ Dados incompletos. Você ainda pode criar o pedido.'),
           backgroundColor: Colors.orange,
         ),
       );
-      return;
+      // ❌ Não retorna mais — tela liberada
     }
 
 
@@ -281,29 +287,64 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
         return;
       }
 
-      final clienteNome = pedido['cliente_nome'] ?? '';
-      final tempClienteId = int.tryParse(pedido['cliente_id'].toString());
-      final tempCondicaoId = int.tryParse(pedido['cond_pagto_id'].toString());
-
       // =====================================================
-      // 🧩 Identifica corretamente a tabela (numérica ou texto)
-      // =====================================================
-      final tabelaRaw = (pedido['tabela_id'] ?? pedido['tabela'] ?? '').toString().trim().toLowerCase();
-      debugPrint('📊 Tabela detectada: $tabelaRaw');
+// 🟡 NORMALIZAÇÃO — cliente vindo da API
+// =====================================================
+      final clienteNome = pedido['cliente_nome']
+          ?? pedido['nome_cliente']
+          ?? pedido['cliente']
+          ?? pedido['cliente_nome_app']
+          ?? '';
 
-      if (['pdf', 'excel', 'st', 'int'].contains(tabelaRaw)) {
-        _tabelaSelecionada = tabelaRaw;
-        tabelaId = 0;
+      final tempClienteId = int.tryParse(
+          '${pedido['cliente_id']
+              ?? pedido['id_cliente']
+              ?? pedido['clienteId']
+              ?? pedido['clienteIdApp']
+              ?? ''}'
+      );
+
+// =====================================================
+// 🟣 NORMALIZAÇÃO — condição de pagamento
+// =====================================================
+      final tempCondicaoId = int.tryParse(
+          '${pedido['cond_pagto_id']
+              ?? pedido['id_condicao']
+              ?? pedido['condicao_pagamento_id']
+              ?? pedido['condicaoId']
+              ?? pedido['pagamento_id']
+              ?? ''}'
+      );
+
+// =====================================================
+// 🔵 NORMALIZAÇÃO — tabela (ID numérico ou texto: excel, pdf, st…)
+// =====================================================
+      final tabelaRaw = (pedido['tabela_id']
+          ?? pedido['tabela']
+          ?? pedido['tabela_nome']
+          ?? pedido['id_tabela']
+          ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+
+      String? tempTabelaSelecionada;
+      int? tempTabelaId;
+
+      if (['pdf', 'excel', 'st', 'int', 'varejo', 'lotus'].contains(tabelaRaw)) {
+        tempTabelaSelecionada = tabelaRaw;
+        tempTabelaId = 0;
       } else {
         final parsed = int.tryParse(tabelaRaw);
         if (parsed != null) {
-          _tabelaSelecionada = parsed.toString();
-          tabelaId = parsed;
+          tempTabelaSelecionada = parsed.toString();
+          tempTabelaId = parsed;
         } else {
-          _tabelaSelecionada = null;
-          tabelaId = null;
+          tempTabelaSelecionada = null;
+          tempTabelaId = null;
         }
       }
+
 
       // =====================================================
       // 🧾 Monta os demais dados do pedido
@@ -311,16 +352,26 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
       await Future.delayed(const Duration(milliseconds: 50));
 
       setState(() {
+        // CLIENTE
         clienteId = tempClienteId;
-        clienteBuscaCtrl.text = clienteNome;
+        // CORREÇÃO CLIENTE — Limpa possíveis "•" ou itens adicionais
+        clienteBuscaCtrl.text = clienteNome.toString().split(' • ').first.trim();
 
+
+        // TABELA DE PREÇO
+        tabelaId = tempTabelaId;
+        _tabelaSelecionada = tempTabelaSelecionada;
+
+        // CONDIÇÃO DE PAGAMENTO
         condicaoId = condicoes.any((c) => int.tryParse('${c['id']}') == tempCondicaoId)
             ? tempCondicaoId
             : null;
 
+        // CAMPOS EXTRAS
         descontoGeral = 0;
         obsCtrl.text = pedido['observacao'] ?? '';
 
+        // ITENS
         itens = List<Map<String, dynamic>>.from(pedido['itens'] ?? []).map((item) {
           final produtoId = item['produto_id'];
           final produtoLocal = produtos.firstWhere(
@@ -328,6 +379,7 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
             orElse: () => {'nome': '', 'codigo': ''},
           );
 
+          // Nome e código priorizam o salvo no pedido
           final nome = (item['nome']?.toString().trim().isNotEmpty ?? false)
               ? item['nome']
               : (produtoLocal['nome'] ?? 'Produto sem nome');
@@ -356,6 +408,7 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
           };
         }).toList();
       });
+
 
       debugPrint('✅ Pedido #$pedidoId carregado com sucesso.');
     } catch (e) {
@@ -437,10 +490,19 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
 
     final prefs = await SharedPreferences.getInstance();
 
-    final clienteNomeSelecionado = clientes.firstWhere(
+    final clienteEncontrado = clientes.firstWhere(
           (c) => c['id'].toString() == clienteId?.toString(),
       orElse: () => {'nome': ''},
-    )['nome'];
+    );
+
+// LIMPA qualquer endereço/fantasia/detalhes acoplados
+    final clienteNomeSelecionado = (clienteEncontrado['nome'] ?? '')
+        .toString()
+        .split(' • ')
+        .first
+        .split(',')        // <- remove partes como “, 123”
+        .first
+        .trim();
 
     final pedidoJson = jsonEncode({
       'clienteId': clienteId,
@@ -688,12 +750,14 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
                 'desconto'  : desc,
               };
 
-              if (novoItem['produto_id'] == null) {
+              // Se for novo item e não tiver produto_id → erro
+              if (!isEdit && novoItem['produto_id'] == null) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Produto inválido.')),
                 );
                 return;
               }
+
 
               setState(() {
                 if (isEdit) {
@@ -956,16 +1020,18 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
                   child: ListView(
                     children: sugestoesClientes.map((cliente) {
                       return ListTile(
+                        // CORREÇÃO CLIENTE — Remove fantasia/endereço do campo de seleção
                         title: Text(
-                          "${cliente['cnpj']} • ${cliente['nome']}"
-                              "${(cliente['fantasia'] != null && cliente['fantasia'].toString().trim().isNotEmpty ? " • ${cliente['fantasia']}" : "")}",
+                          "${cliente['cnpj']} • ${cliente['nome']}",
                           style: const TextStyle(color: Color(0xFF333333)),
                         ),
+
                         onTap: () {
                           setState(() {
                             clienteId = int.tryParse(cliente['id'].toString());
-                            clienteBuscaCtrl.text = "${cliente['nome']}"
-                                "${(cliente['fantasia'] != null && cliente['fantasia'].toString().trim().isNotEmpty ? " • ${cliente['fantasia']}" : "")}";
+                            // CORREÇÃO CLIENTE — Apenas nome (sem endereço, sem fantasia)
+                            clienteBuscaCtrl.text = cliente['nome'] ?? '';
+
                             sugestoesClientes.clear();
                           });
                           salvarRascunho();

@@ -1,18 +1,24 @@
 // =============================================================
-// 🏠 TOOCA CRM - HOME SCREEN (v4.4 SaaS Multiempresa)
+// 🏠 TOOCA CRM - HOME SCREEN (v7.3 EVA SUPREMA)
 // -------------------------------------------------------------
-// Tela principal: menu, sincronização e acesso rápido aos módulos
+// ✔ 100% alinhada com Splash + SincronizacaoService
+// ✔ Usa empresaAtivaLocal() (mesma regra do app todo)
+// ✔ Consulta SaaS antes de abrir qualquer funcionalidade
+// ✔ Bloqueio global unificado
+// ✔ Fluxo seguro e sem inconsistências
 // =============================================================
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-// 🧩 Importação das telas
+import 'package:app_tooca_crm/screens/sincronizacao_service.dart';
 import 'package:app_tooca_crm/screens/sincronizar_screen.dart';
 import 'package:app_tooca_crm/screens/pedidos_screen.dart';
 import 'package:app_tooca_crm/screens/clientes_screen.dart';
 import 'package:app_tooca_crm/screens/novo_pedido_screen.dart';
 import 'package:app_tooca_crm/screens/login_screen.dart';
+
+import 'TelaBloqueio.dart';
 
 class HomeScreen extends StatefulWidget {
   final int usuarioId;
@@ -33,7 +39,9 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  String nomeUsuario = '';
+  String nomeUsuario = "";
+  String planoEmpresa = "free";
+  String empresaExpira = "";
 
   @override
   void initState() {
@@ -41,165 +49,203 @@ class _HomeScreenState extends State<HomeScreen> {
     carregarSessao();
   }
 
+  // =============================================================
+  // 🔍 CARREGAR DADOS LOCAIS
+  // =============================================================
   Future<void> carregarSessao() async {
     final prefs = await SharedPreferences.getInstance();
-    final usuarioId = prefs.getInt('usuario_id') ?? widget.usuarioId;
-    final empresaId = prefs.getInt('empresa_id') ?? widget.empresaId;
-    final plano = prefs.getString('plano') ?? widget.plano;
 
-    debugPrint('🟢 Sessão ativa → usuario=$usuarioId | empresa=$empresaId | plano=$plano');
+    nomeUsuario = prefs.getString("nome") ?? "";
+    planoEmpresa = prefs.getString("plano_empresa") ?? "free";
+    empresaExpira = prefs.getString("empresa_expira") ?? "";
 
-    setState(() {
-      nomeUsuario = prefs.getString('nome') ?? widget.email.split('@').first;
-    });
+    debugPrint(
+        "🟢 HOME Sessão → user=${widget.usuarioId} | empresa=${widget.empresaId} | plano=$planoEmpresa | expira=$empresaExpira"
+    );
+
+    setState(() {});
   }
 
+  // =============================================================
+  // ✔ REGRA OFICIAL v7.3 (mesma do Splash)
+  // =============================================================
+  Future<bool> validarEmpresa() async {
+    // 1️⃣ Verifica local
+    final ativaLocal = await SincronizacaoService.empresaAtivaLocal();
+    if (!ativaLocal) {
+      _bloquear();
+      return false;
+    }
+
+    // 2️⃣ Consulta SaaS
+    await SincronizacaoService.consultarStatusEmpresa();
+
+    // 3️⃣ Revalida local após atualização SaaS
+    final ativa2 = await SincronizacaoService.empresaAtivaLocal();
+    if (!ativa2) {
+      _bloquear();
+      return false;
+    }
+
+    return true;
+  }
+
+  // =============================================================
+  // 🚫 ABRIR TELA DE BLOQUEIO GLOBAL
+  // =============================================================
+  void _bloquear() {
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => TelaBloqueio(
+          planoEmpresa: planoEmpresa,
+          empresaExpira: empresaExpira,
+        ),
+      ),
+    );
+  }
+
+  // =============================================================
+  // 🚪 SAIR
+  // =============================================================
   Future<void> sair() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
 
-    if (!mounted) return;
-
-    Navigator.of(context).pushAndRemoveUntil(
+    Navigator.pushAndRemoveUntil(
+      context,
       MaterialPageRoute(builder: (_) => const LoginScreen()),
-          (route) => false,
+          (_) => false,
     );
   }
 
+  // =============================================================
+  // 🖥️ UI / MENU
+  // =============================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       appBar: AppBar(
-        backgroundColor: const Color(0xFFFFCC00),
+        backgroundColor: const Color(0xFFFFC107),
         foregroundColor: Colors.black,
         title: const Text(
           'Tooca CRM',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            color: Colors.black,
-          ),
+          style: TextStyle(fontWeight: FontWeight.bold),
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: sair,
-            tooltip: 'Sair',
-          ),
+          IconButton(icon: const Icon(Icons.logout), onPressed: sair),
         ],
       ),
+
       body: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '👋 Olá, $nomeUsuario',
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              "👋 Olá, $nomeUsuario",
+              style: const TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+              ),
             ),
+
             const SizedBox(height: 30),
+
             Expanded(
               child: GridView.count(
                 crossAxisCount: 2,
                 mainAxisSpacing: 16,
                 crossAxisSpacing: 16,
                 children: [
-
-                  // =====================================================
-                  // 🧾 NOVO PEDIDO
-                  // =====================================================
+                  // =============================================================
+                  // 🟡 NOVO PEDIDO
+                  // =============================================================
                   _buildCard(
                     icon: Icons.note_add_outlined,
-                    label: 'Novo Pedido',
+                    label: "Novo Pedido",
                     onTap: () async {
-                      final prefs = await SharedPreferences.getInstance();
-                      final empresaId = prefs.getInt('empresa_id') ?? widget.empresaId;
-                      final usuarioId = prefs.getInt('usuario_id') ?? widget.usuarioId;
-                      final plano = prefs.getString('plano') ?? widget.plano;
-
-                      debugPrint('🟡 Novo Pedido → empresa=$empresaId | usuario=$usuarioId | plano=$plano');
-
-                      if (empresaId == 0 || usuarioId == 0) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('⚠️ Sessão inválida. Faça login novamente.')),
-                        );
-                        return;
-                      }
+                      if (!await validarEmpresa()) return;
 
                       Navigator.push(
                         context,
                         MaterialPageRoute(
                           builder: (_) => NovoPedidoScreen(
-                            usuarioId: usuarioId,
-                            empresaId: empresaId,
-                            plano: plano,
+                            usuarioId: widget.usuarioId,
+                            empresaId: widget.empresaId,
+                            plano: planoEmpresa,
                           ),
                         ),
                       );
                     },
                   ),
 
-                  // =====================================================
-                  // 📋 PEDIDOS
-                  // =====================================================
+                  // =============================================================
+                  // 🧾 PEDIDOS
+                  // =============================================================
                   _buildCard(
                     icon: Icons.receipt_long,
-                    label: 'Pedidos',
-                    onTap: () {
+                    label: "Pedidos",
+                    onTap: () async {
+                      if (!await validarEmpresa()) return;
+
                       Navigator.push(
                         context,
                         MaterialPageRoute(
                           builder: (_) => PedidosScreen(
                             usuarioId: widget.usuarioId,
                             empresaId: widget.empresaId,
-                            plano: widget.plano, // ✅ adicionado corretamente
+                            plano: planoEmpresa,
                           ),
                         ),
                       );
                     },
                   ),
 
-
-                  // =====================================================
+                  // =============================================================
                   // 👥 CLIENTES
-                  // =====================================================
+                  // =============================================================
                   _buildCard(
                     icon: Icons.people_outline,
-                    label: 'Clientes',
-                    onTap: () {
+                    label: "Clientes",
+                    onTap: () async {
+                      if (!await validarEmpresa()) return;
+
                       Navigator.push(
                         context,
                         MaterialPageRoute(
                           builder: (_) => ClientesScreen(
                             usuarioId: widget.usuarioId,
                             empresaId: widget.empresaId,
-                            plano: widget.plano,
+                            plano: planoEmpresa,
                           ),
                         ),
                       );
                     },
                   ),
 
-                  // =====================================================
+                  // =============================================================
                   // 🔄 SINCRONIZAR
-                  // =====================================================
+                  // =============================================================
                   _buildCard(
                     icon: Icons.sync,
-                    label: 'Sincronizar',
-                    onTap: () {
+                    label: "Sincronizar",
+                    onTap: () async {
+                      if (!await validarEmpresa()) return;
+
                       Navigator.push(
                         context,
                         MaterialPageRoute(
                           builder: (_) => SincronizarScreen(
                             usuarioId: widget.usuarioId,
                             empresaId: widget.empresaId,
-                            plano: widget.plano,
+                            plano: planoEmpresa,
                           ),
                         ),
                       );
                     },
                   ),
-
                 ],
               ),
             ),
@@ -210,7 +256,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // =============================================================
-  // 🔧 CARD PADRÃO
+  // 💛 CARD DO MENU
   // =============================================================
   Widget _buildCard({
     required IconData icon,

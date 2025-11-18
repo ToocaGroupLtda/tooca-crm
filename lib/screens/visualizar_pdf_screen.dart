@@ -1,7 +1,11 @@
 // =============================================================
-// 📄 TOOCA CRM - Visualizar PDF (v4.4 SaaS Multiempresa)
+// 📄 TOOCA CRM - Visualizar PDF (v4.4.3 SaaS Multiempresa)
 // -------------------------------------------------------------
-// Compatível com modo online/offline e parâmetros multiempresa.
+// Compatível com modo online/offline
+// Multiempresa (empresaId)
+// Multiusuário (usuarioId)
+// Compartilhamento + Download local
+// Suporte completo à edição de pedido offline
 // =============================================================
 
 import 'dart:io';
@@ -19,8 +23,14 @@ class VisualizarPdfScreen extends StatefulWidget {
   final int usuarioId;
   final String plano;
   final bool isAdmin;
-  final void Function(BuildContext context, Map<String, dynamic> pedidoOffline)? onEditarOffline;
 
+  /// Chamado ao clicar em "Editar Offline"
+  final void Function(BuildContext context, Map<String, dynamic> pedidoOffline)?
+  onEditarOffline;
+
+  // =============================================================
+  // 🔹 Construtor padrão
+  // =============================================================
   const VisualizarPdfScreen({
     Key? key,
     required this.pedidoId,
@@ -32,7 +42,11 @@ class VisualizarPdfScreen extends StatefulWidget {
     this.onEditarOffline,
   }) : super(key: key);
 
-  const VisualizarPdfScreen.online({
+  // =============================================================
+  // 🔹 Construtor para ONLINE
+  //    (não pode ser const — usa rede, IO, PDF dinâmico)
+  // =============================================================
+  VisualizarPdfScreen.online({
     Key? key,
     required this.pedidoId,
     required this.empresaId,
@@ -43,7 +57,10 @@ class VisualizarPdfScreen extends StatefulWidget {
         onEditarOffline = null,
         super(key: key);
 
-  const VisualizarPdfScreen.offline({
+  // =============================================================
+  // 🔹 Construtor para OFFLINE
+  // =============================================================
+  VisualizarPdfScreen.offline({
     Key? key,
     required this.pedidoOffline,
     required this.empresaId,
@@ -67,13 +84,18 @@ class _VisualizarPdfScreenState extends State<VisualizarPdfScreen> {
   @override
   void initState() {
     super.initState();
+
     if (widget.isOffline) {
-      setState(() => carregando = false);
+      // Nada para baixar — pedido offline não tem PDF
+      carregando = false;
     } else {
       carregarPdf();
     }
   }
 
+  // =============================================================
+  // 🔄 Baixar PDF online
+  // =============================================================
   Future<void> carregarPdf() async {
     if (widget.pedidoId == null) {
       setState(() => carregando = false);
@@ -94,6 +116,7 @@ class _VisualizarPdfScreenState extends State<VisualizarPdfScreen> {
 
       if (response.statusCode == 200) {
         final pdfBytes = response.bodyBytes;
+
         if (pdfBytes.lengthInBytes < 1000) {
           throw Exception('PDF inválido ou vazio.');
         }
@@ -107,7 +130,7 @@ class _VisualizarPdfScreenState extends State<VisualizarPdfScreen> {
           carregando = false;
         });
       } else {
-        throw Exception('Erro HTTP ${response.statusCode}');
+        throw Exception('HTTP ${response.statusCode}');
       }
     } catch (e) {
       debugPrint('❌ Erro ao carregar PDF: $e');
@@ -120,10 +143,15 @@ class _VisualizarPdfScreenState extends State<VisualizarPdfScreen> {
     }
   }
 
+  // =============================================================
+  // 📤 Compartilhar PDF
+  // =============================================================
   Future<void> compartilharPdf() async {
     if (widget.isOffline) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('📴 Pedido offline: gere o PDF quando estiver online.')),
+        const SnackBar(
+          content: Text('📴 Pedido offline não possui PDF ainda.'),
+        ),
       );
       return;
     }
@@ -142,44 +170,60 @@ class _VisualizarPdfScreenState extends State<VisualizarPdfScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final offline = widget.isOffline;
+    final isOffline = widget.isOffline;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F7F7),
+      backgroundColor: const Color(0xFFF6F6F6),
       appBar: AppBar(
-        title: Text(offline ? 'Pedido Offline' : 'Visualizar PDF'),
+        title: Text(isOffline ? 'Pedido Offline' : 'Visualizar PDF'),
         backgroundColor: const Color(0xFFFFC107),
         foregroundColor: Colors.black,
         actions: [
-          if (!offline)
+          if (!isOffline)
             IconButton(
               icon: const Icon(Icons.refresh),
               onPressed: carregarPdf,
-              tooltip: 'Atualizar PDF',
             ),
-          if (!offline)
+          if (!isOffline)
             IconButton(
               icon: const Icon(Icons.share),
               onPressed: compartilharPdf,
-              tooltip: 'Compartilhar PDF',
             ),
         ],
       ),
+
+      // =========================================================
+      // BODY
+      // =========================================================
       body: carregando
           ? const Center(child: CircularProgressIndicator(color: Colors.amber))
-          : offline
+          : isOffline
           ? _buildOfflineBody(context)
-          : (localPdfPath != null
-          ? SfPdfViewer.file(File(localPdfPath!))
-          : const Center(child: Text('Falha ao carregar PDF.'))),
+          : _buildOnlineBody(),
     );
   }
 
+  // =============================================================
+  // 📄 PDF ONLINE (módulo SfPdfViewer)
+  // =============================================================
+  Widget _buildOnlineBody() {
+    if (localPdfPath != null) {
+      return SfPdfViewer.file(File(localPdfPath!));
+    }
+    return const Center(child: Text('Falha ao carregar PDF.'));
+  }
+
+  // =============================================================
+  // 📦 Visualização de pedido OFFLINE
+  // =============================================================
   Widget _buildOfflineBody(BuildContext context) {
     final pedido = widget.pedidoOffline ?? {};
-    final clienteNome =
-    (pedido['cliente_nome'] ?? pedido['cliente'] ?? 'Cliente não informado').toString();
-    final total = (pedido['total'] ?? pedido['valor_total'] ?? 0).toString();
+
+    final cliente = (pedido['cliente_nome'] ?? pedido['cliente'] ?? 'Cliente não informado')
+        .toString();
+
+    final total = (pedido['total'] ?? pedido['total_geral'] ?? pedido['valor_total'] ?? 0)
+        .toString();
 
     return Padding(
       padding: const EdgeInsets.all(16),
@@ -200,16 +244,15 @@ class _VisualizarPdfScreenState extends State<VisualizarPdfScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'Pedido Offline — sem PDF ainda',
+                          'Pedido Offline — sem PDF',
                           style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                         ),
-                        const SizedBox(height: 6),
-                        Text('Cliente: $clienteNome'),
-                        Text('Total (estimado): R\$ $total'),
-                        const SizedBox(height: 10),
+                        const SizedBox(height: 8),
+                        Text('Cliente: $cliente'),
+                        Text('Total estimado: R\$ $total'),
+                        const SizedBox(height: 12),
                         const Text(
-                          'Este pedido foi criado offline.\n'
-                              'Você pode editar ou sincronizar quando estiver online.',
+                          'Você pode gerar o PDF assim que estiver online.',
                           style: TextStyle(color: Colors.black54),
                         ),
                       ],
@@ -219,7 +262,9 @@ class _VisualizarPdfScreenState extends State<VisualizarPdfScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 16),
+
+          const SizedBox(height: 20),
+
           if (widget.onEditarOffline != null)
             SizedBox(
               width: double.infinity,

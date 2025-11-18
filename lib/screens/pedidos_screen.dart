@@ -1,17 +1,25 @@
 // =============================================================
-// 📋 TOOCA CRM - Pedidos Screen (v4.4 SaaS Multiempresa)
+// 📋 TOOCA CRM - Pedidos Screen (v6.0 SaaS + EXCEL SHARE SUPREMO)
 // -------------------------------------------------------------
-// Lista de pedidos com layout limpo, integração SaaS e parâmetros
-// consistentes (usuarioId, empresaId, plano).
+// ✔ Verificação LOCAL + SAAS (bloqueio total)
+// ✔ Listagem responsiva para telas pequenas
+// ✔ Botão PDF + Editar + Excluir
+// ✔ Botão Excel -> BAIXA ARQUIVO (bytes) + SALVA + COMPARTILHA
+// ✔ Wrap automático (não estoura layout)
 // =============================================================
 
 import 'dart:convert';
+import 'dart:io';
 import 'package:app_tooca_crm/screens/visualizar_pdf_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:path_provider/path_provider.dart';
+
 import 'novo_pedido_screen.dart';
+import 'sincronizacao_service.dart';
 
 class PedidosScreen extends StatefulWidget {
   final int usuarioId;
@@ -32,9 +40,9 @@ class PedidosScreen extends StatefulWidget {
 class _PedidosScreenState extends State<PedidosScreen> {
   List<dynamic> pedidos = [];
   bool carregando = true;
-  late String planoUsuario;
 
   final NumberFormat _moeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+
   String formatMoeda(num v) => _moeda.format(v);
 
   double parseValorHibridoDart(dynamic valor) {
@@ -44,11 +52,9 @@ class _PedidosScreenState extends State<PedidosScreen> {
     if (s.isEmpty) return 0.0;
     s = s.replaceAll(RegExp(r'[^\d.,-]'), '');
     if (s.contains(',') && s.contains('.')) {
-      s = s.replaceAll('.', '');
-      s = s.replaceAll(',', '.');
-    } else if (s.contains(',') && !s.contains('.')) {
-      s = s.replaceAll('.', '');
-      s = s.replaceAll(',', '.');
+      s = s.replaceAll('.', '').replaceAll(',', '.');
+    } else if (s.contains(',')) {
+      s = s.replaceAll('.', '').replaceAll(',', '.');
     }
     return double.tryParse(s) ?? 0.0;
   }
@@ -56,67 +62,141 @@ class _PedidosScreenState extends State<PedidosScreen> {
   @override
   void initState() {
     super.initState();
-    carregarPlano();
+    _validarECarregar();
   }
 
-  Future<void> carregarPlano() async {
+  // =============================================================
+  // 🔐 Verificação LOCAL + SAAS
+  // =============================================================
+  Future<void> _validarECarregar() async {
     final prefs = await SharedPreferences.getInstance();
-    planoUsuario = widget.plano.isNotEmpty
-        ? widget.plano
-        : prefs.getString('plano') ?? 'free';
 
-    debugPrint(
-        '🟢 PedidosScreen → usuario=${widget.usuarioId}, empresa=${widget.empresaId}, plano=$planoUsuario');
-    await carregarPedidos();
+    // Local
+    if (!await SincronizacaoService.empresaAtivaLocal()) {
+      SincronizacaoService.irParaBloqueio(
+        prefs.getString('plano_empresa') ?? 'free',
+        prefs.getString('empresa_expira') ?? '',
+      );
+      return;
+    }
+
+    // SaaS
+    await SincronizacaoService.consultarStatusEmpresa();
+
+    // Local novamente
+    if (!await SincronizacaoService.empresaAtivaLocal()) {
+      SincronizacaoService.irParaBloqueio(
+        prefs.getString('plano_empresa') ?? 'free',
+        prefs.getString('empresa_expira') ?? '',
+      );
+      return;
+    }
+
+    await _carregarReal();
   }
 
   // =============================================================
-  // 🔄 Carrega pedidos do servidor SaaS
+  // 🔄 Carrega pedidos online
   // =============================================================
-  Future<void> carregarPedidos() async {
+  Future<void> _carregarReal() async {
     setState(() => carregando = true);
+
     try {
       final url = Uri.parse('https://app.toocagroup.com.br/api/listar_pedidos.php');
+
       final response = await http.post(
         url,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'usuario_id': widget.usuarioId,
           'empresa_id': widget.empresaId,
-          'plano': planoUsuario,
+          'plano': widget.plano,
         }),
       );
 
       final data = jsonDecode(response.body);
-      if (data['status'] == 'ok' && data['pedidos'] is List) {
-        setState(() => pedidos = data['pedidos']);
-      } else {
-        setState(() => pedidos = []);
-      }
-      debugPrint('📦 ${pedidos.length} pedidos carregados da empresa ${widget.empresaId}');
-    } catch (e) {
-      debugPrint('❌ Erro ao carregar pedidos: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('📴 Sem conexão com o servidor.')),
-        );
-      }
+      pedidos = data['status'] == 'ok' ? data['pedidos'] : [];
+    } catch (_) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('📴 Sem conexão com o servidor.')),
+      );
     }
+
     if (mounted) setState(() => carregando = false);
   }
 
   // =============================================================
-  // 🗑️ Excluir pedido
+  // 🔄 Exportar Excel (ARQUIVO DIRETO → Share)
+  // =============================================================
+  Future<void> exportarExcelDireto(Map<String, dynamic> pedido) async {
+    final pedidoId = pedido['id'].toString();
+
+    final url =
+        "https://app.toocagroup.com.br/api/exportar_excel.php?pedido_id=$pedidoId&empresa_id=${widget.empresaId}";
+
+    try {
+      final response = await http.get(Uri.parse(url));
+
+      if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("❌ Erro ao gerar Excel.")),
+        );
+        return;
+      }
+
+      // Salvar arquivo temporário
+      final dir = await getTemporaryDirectory();
+      final file = File("${dir.path}/Pedido_$pedidoId.xlsx");
+      await file.writeAsBytes(response.bodyBytes);
+
+      // Compartilhar no WhatsApp / Apps
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: "Pedido #$pedidoId - Excel gerado pelo Tooca CRM",
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Erro: $e")),
+      );
+    }
+  }
+
+  // =============================================================
+  // 🗑️ Excluir Pedido
   // =============================================================
   Future<void> excluirPedido(int pedidoId) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    if (!await SincronizacaoService.empresaAtivaLocal()) {
+      SincronizacaoService.irParaBloqueio(
+        prefs.getString('plano_empresa') ?? 'free',
+        prefs.getString('empresa_expira') ?? '',
+      );
+      return;
+    }
+
+    await SincronizacaoService.consultarStatusEmpresa();
+
+    if (!await SincronizacaoService.empresaAtivaLocal()) {
+      SincronizacaoService.irParaBloqueio(
+        prefs.getString('plano_empresa') ?? 'free',
+        prefs.getString('empresa_expira') ?? '',
+      );
+      return;
+    }
+
     final confirmar = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Excluir Pedido'),
-        content: Text('Tem certeza que deseja excluir o pedido #$pedidoId?'),
+        content: Text("Deseja excluir o pedido #$pedidoId?"),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Excluir')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancelar')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Excluir')),
         ],
       ),
     );
@@ -125,6 +205,7 @@ class _PedidosScreenState extends State<PedidosScreen> {
 
     try {
       final url = Uri.parse('https://app.toocagroup.com.br/api/excluir_pedido.php');
+
       final response = await http.post(
         url,
         headers: {'Content-Type': 'application/json'},
@@ -132,72 +213,88 @@ class _PedidosScreenState extends State<PedidosScreen> {
           'pedido_id': pedidoId,
           'usuario_id': widget.usuarioId,
           'empresa_id': widget.empresaId,
-          'plano': planoUsuario,
+          'plano': widget.plano,
         }),
       );
 
       final json = jsonDecode(response.body);
-      if (!mounted) return;
+
       if (json['status'] == 'ok') {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✅ Pedido excluído com sucesso')),
+          const SnackBar(content: Text("✅ Pedido excluído")),
         );
-        carregarPedidos();
+        _validarECarregar();
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('❌ Erro: ${json['mensagem']}')),
+          SnackBar(content: Text("❌ Erro: ${json['mensagem']}")),
         );
       }
-    } catch (e) {
-      if (!mounted) return;
+    } catch (_) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('❌ Erro de conexão: $e')),
+        const SnackBar(content: Text("❌ Erro ao excluir")),
       );
     }
   }
 
   // =============================================================
-  // ✏️ Abre pedido para edição
+  // ✏️ Abrir Edição
   // =============================================================
-  void abrirEdicao(Map<String, dynamic> pedidoJson) {
-    Navigator.push<bool>(
+  void abrirEdicao(Map<String, dynamic> pedidoJson) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    if (!await SincronizacaoService.empresaAtivaLocal()) {
+      SincronizacaoService.irParaBloqueio(
+        prefs.getString('plano_empresa') ?? 'free',
+        prefs.getString('empresa_expira') ?? '',
+      );
+      return;
+    }
+
+    await SincronizacaoService.consultarStatusEmpresa();
+
+    if (!await SincronizacaoService.empresaAtivaLocal()) {
+      SincronizacaoService.irParaBloqueio(
+        prefs.getString('plano_empresa') ?? 'free',
+        prefs.getString('empresa_expira') ?? '',
+      );
+      return;
+    }
+
+    Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => NovoPedidoScreen(
           usuarioId: widget.usuarioId,
           empresaId: widget.empresaId,
-          plano: planoUsuario,
+          plano: widget.plano,
           pedidoId: int.tryParse(pedidoJson['id'].toString()),
           pedidoJson: pedidoJson,
         ),
       ),
-    ).then((sucesso) {
-      if (sucesso == true) carregarPedidos();
+    ).then((ok) {
+      if (ok == true) _validarECarregar();
     });
   }
 
   // =============================================================
-  // 🧱 Interface
+  // 🧱 UI
   // =============================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       appBar: AppBar(
-        title: const Text(
-          'Pedidos',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
+        title: const Text('Pedidos', style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: const Color(0xFFFFCC00),
         foregroundColor: Colors.black,
         actions: [
           IconButton(
-            onPressed: carregarPedidos,
+            onPressed: _validarECarregar,
             icon: const Icon(Icons.refresh, color: Colors.black),
-            tooltip: 'Atualizar pedidos',
           ),
         ],
       ),
+
       body: carregando
           ? const Center(child: CircularProgressIndicator(color: Colors.amber))
           : pedidos.isEmpty
@@ -207,117 +304,103 @@ class _PedidosScreenState extends State<PedidosScreen> {
         itemCount: pedidos.length,
         itemBuilder: (context, index) {
           final p = pedidos[index];
-          final statusStr = (p['status'] ?? '').toString();
-          final isFaturado = statusStr.toLowerCase() == 'faturado';
-          final podeEditar =
-              (p['usuario_id'] == widget.usuarioId) || planoUsuario != 'free';
-          final total = parseValorHibridoDart(p['total']);
+          final total = parseValorHibridoDart(p['total'] ?? 0);
 
           return Card(
-            margin: const EdgeInsets.only(bottom: 14),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            margin: const EdgeInsets.only(bottom: 16),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
             elevation: 3,
-            color: Colors.white,
             child: Padding(
               padding: const EdgeInsets.all(14),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Pedido #${p['id']}',
+                    "Pedido #${p['id']}",
                     style: const TextStyle(
                       fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                      color: Colors.black87,
+                      fontSize: 17,
                     ),
                   ),
                   const SizedBox(height: 4),
-                  Text('Cliente: ${p['cliente']}', style: const TextStyle(color: Colors.black87)),
-                  Text('Total: ${formatMoeda(total)}',
-                      style: const TextStyle(color: Colors.black87)),
-                  const SizedBox(height: 8),
+                  Text("Cliente: ${p['cliente']}"),
+                  Text("Total: ${formatMoeda(total)}"),
+                  const SizedBox(height: 12),
 
+                  // 🔥 BOTÕES RESPONSIVOS
                   Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(
-                        isFaturado ? Icons.check_circle : Icons.hourglass_bottom,
-                        color: isFaturado ? Colors.green : Colors.orange,
-                        size: 18,
-                      ),
-                      const SizedBox(width: 6),
-                      Text('Status: $statusStr',
-                          style: const TextStyle(color: Colors.black87)),
-                    ],
-                  ),
-
-                  const SizedBox(height: 10),
-                  Divider(color: Colors.grey.shade300, thickness: 1),
-
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      Expanded(
+                      Flexible(
                         child: ElevatedButton.icon(
+                          icon: const Icon(Icons.picture_as_pdf, color: Colors.black),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFFFFCC00),
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
+                            minimumSize: const Size(0, 40),
                           ),
-                          icon: const Icon(Icons.picture_as_pdf, color: Colors.black),
                           label: const Text('PDF', style: TextStyle(color: Colors.black)),
                           onPressed: () {
-                            final id = int.tryParse(p['id'].toString()) ?? 0;
-
                             Navigator.push(
                               context,
                               MaterialPageRoute(
                                 builder: (_) => VisualizarPdfScreen(
-                                  pedidoId: id,
+                                  pedidoId: int.tryParse(p['id'].toString()) ?? 0,
                                   empresaId: widget.empresaId,
                                   usuarioId: widget.usuarioId,
-                                  plano: planoUsuario,
+                                  plano: widget.plano,
                                 ),
                               ),
                             );
                           },
                         ),
-
                       ),
+
                       const SizedBox(width: 8),
-                      Expanded(
+
+                      Flexible(
                         child: ElevatedButton.icon(
+                          icon: const Icon(Icons.edit, color: Colors.black),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.amber.shade700,
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10)),
+                            minimumSize: const Size(0, 40),
                           ),
-                          icon: const Icon(Icons.edit, color: Colors.black),
-                          label: const Text('Editar',
-                              style: TextStyle(color: Colors.black)),
-                          onPressed: podeEditar ? () => abrirEdicao(p) : null,
+                          label: const Text('Editar', style: TextStyle(color: Colors.black)),
+                          onPressed: () => abrirEdicao(p),
                         ),
                       ),
+
                       const SizedBox(width: 8),
-                      Expanded(
+
+                      Flexible(
                         child: ElevatedButton.icon(
+                          icon: const Icon(Icons.delete, color: Colors.white),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.red,
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10)),
+                            minimumSize: const Size(0, 40),
                           ),
-                          icon: const Icon(Icons.delete, color: Colors.white),
-                          label: const Text('Excluir',
-                              style: TextStyle(color: Colors.white)),
-                          onPressed: podeEditar ? () => excluirPedido(p['id']) : null,
+                          label: const Text('Excluir', style: TextStyle(color: Colors.white)),
+                          onPressed: () => excluirPedido(p['id']),
+                        ),
+                      ),
+
+                      const SizedBox(width: 8),
+
+                      Flexible(
+                        child: ElevatedButton.icon(
+                          icon: const Icon(Icons.download, color: Colors.black),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.greenAccent,
+                            minimumSize: const Size(0, 40),
+                          ),
+                          label: const Text('Excel', style: TextStyle(color: Colors.black)),
+                          onPressed: () => exportarExcelDireto(p),
                         ),
                       ),
                     ],
-                  ),
+                  )
+
                 ],
               ),
             ),

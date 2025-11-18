@@ -5,7 +5,8 @@ publish_to: "none"
 version: 1.0.0+1
 
 environment:
-  sdk: ">=2.17.0 <3.0.0"
+  sdk: ">=3.2.0 <4.0.0"
+
 
 dependencies:
   flutter:
@@ -13,7 +14,8 @@ dependencies:
   http: ^1.4.0
   cupertino_icons: ^1.0.2
   shared_preferences: ^2.2.2
-  url_launcher: ^6.1.11
+  url_launcher: ^6.3.0
+
   share_plus: ^7.2.1
   syncfusion_flutter_pdfviewer: ^29.2.11
   webview_flutter: ^4.13.0
@@ -34,27 +36,23 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/splash.png
-    - assets/icon.png   # <- ícone adicionado aqui
+    - assets/        # <- CARREGA TUDO AUTOMÁTICO
 
 flutter_native_splash:
-  color: "#FFFFFF"                 # Cor de fundo
-  image: assets/splash.png        # Sua imagem centralizada
+  color: "#FFFFFF"
+  image: assets/splash.png
   android: true
   ios: true
-  fullscreen: true                # Fora do android_12
+  fullscreen: true
 
-  android_gravity: center         # Centraliza no Android
-  ios_content_mode: scaleAspectFit  # Mantém proporção no iOS
+  android_gravity: center
+  ios_content_mode: scaleAspectFit
 
   android_12:
     image: assets/splash.png
     icon_background_color: "#FFFFFF"
 
-
 flutter_icons:
   android: true
   ios: true
   image_path: "assets/icon.png"
-
-
