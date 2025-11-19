@@ -1,11 +1,11 @@
 // ============================================================
-// 🚫 TOOCA CRM - Tela de Bloqueio (v5.0 EVA PRIME)
+// 🚫 TOOCA CRM - Tela de Bloqueio (v5.1 EVA SUPREMA SYNC)
 // ------------------------------------------------------------
-// ✔ Usa globalNavigatorKey (navegação universal)
-// ✔ Bloqueia totalmente a navegação
-// ✔ Limpa sessão ao enviar para Login
-// ✔ WhatsApp funcionando
-// ✔ Layout estável
+// ✔ Usa globalNavigatorKey
+// ✔ Estatuto MASTER não interfere
+// ✔ Limpa sessão corretamente
+// ✔ Abrir WhatsApp seguro
+// ✔ Layout estável e sem exceções
 // ============================================================
 
 import 'package:flutter/material.dart';
@@ -26,21 +26,23 @@ class TelaBloqueio extends StatelessWidget {
   }) : super(key: key);
 
   // ============================================================
-  // 📞 ABRIR WHATSAPP
+  // 📞 ABRIR WHATSAPP — agora 100% seguro
   // ============================================================
   Future<void> abrirWhatsapp() async {
     const numero = "5511942815500";
 
     final msg = Uri.encodeComponent(
-        "Olá! Minha empresa está bloqueada no Tooca CRM.\n"
-            "Plano: $planoEmpresa\n"
-            "Expiração: $empresaExpira\n"
-            "Preciso de ajuda para reativar minha conta."
+      "Olá! Minha empresa está bloqueada no Tooca CRM.\n"
+          "Plano: $planoEmpresa\n"
+          "Expiração: $empresaExpira\n"
+          "Preciso de ajuda para reativar.",
     );
 
     final url = Uri.parse("https://wa.me/$numero?text=$msg");
 
-    await launchUrl(url, mode: LaunchMode.externalApplication);
+    if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
+      debugPrint("⚠️ Não foi possível abrir o WhatsApp.");
+    }
   }
 
   // ============================================================
@@ -59,7 +61,7 @@ class TelaBloqueio extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return WillPopScope(
-      onWillPop: () async => false, // 🚫 Impede qualquer retorno
+      onWillPop: () async => false,
       child: Scaffold(
         backgroundColor: Colors.white,
         body: Center(
@@ -100,7 +102,7 @@ class TelaBloqueio extends StatelessWidget {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: abrirWhatsapp,
+                    onPressed: () async => await abrirWhatsapp(),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.green,
                       foregroundColor: Colors.white,
@@ -124,7 +126,7 @@ class TelaBloqueio extends StatelessWidget {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: irParaLogin,
+                    onPressed: () async => await irParaLogin(),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.amber,
                       foregroundColor: Colors.black,

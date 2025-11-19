@@ -1,11 +1,12 @@
-// ============================================================
-// 🚀 TOOCA CRM - Main App (v4.9 EVA PRIME)
-// ------------------------------------------------------------
-// ✔ Fluxo 100% correto: sempre inicia pelo SplashScreen
-// ✔ globalNavigatorKey funcional para bloqueio universal
-// ✔ Nada de redirecionamento direto para Home
-// ✔ Splash decide: Login → Home → Bloqueio
-// ============================================================
+// =============================================================
+// 🚀 TOOCA CRM - Main App (v5.1 EVA SUPREMA SEM BLOQUEIO)
+// -------------------------------------------------------------
+// ✔ Sem SplashScreen
+// ✔ Home NUNCA bloqueia
+// ✔ Login controla bloqueio
+// ✔ Sincronizar controla bloqueio
+// ✔ Main só verifica se existe sessão
+// =============================================================
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,7 +14,6 @@ import 'package:flutter/services.dart';
 
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
-import 'screens/splash_screen.dart';
 
 final GlobalKey<NavigatorState> globalNavigatorKey = GlobalKey<NavigatorState>();
 
@@ -27,60 +27,72 @@ void main() async {
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
 
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  Widget _startScreen = const Center(
+    child: CircularProgressIndicator(color: Colors.black),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _carregarSessaoInicial();
+  }
+
   // ============================================================
-  // 🔍 Sessão é carregada apenas quando Splash chamar
+  // 🔥 Carregar sessão e decidir tela inicial
   // ============================================================
-  Future<Map<String, dynamic>> carregarSessao() async {
+  Future<void> _carregarSessaoInicial() async {
     final prefs = await SharedPreferences.getInstance();
 
-    return {
-      'usuario_id': prefs.getInt('usuario_id') ?? 0,
-      'empresa_id': prefs.getInt('empresa_id') ?? 0,
-      'email': prefs.getString('email') ?? '',
-      'plano_empresa': prefs.getString('plano_empresa') ?? 'free',
-      'expira': prefs.getString('empresa_expira') ?? '',
-    };
+    final usuarioId = prefs.getInt('usuario_id');
+    final empresaId = prefs.getInt('empresa_id');
+    final email = prefs.getString('email') ?? '';
+    final planoUser = prefs.getString("plano_usuario") ?? "user";
+
+    // 1️⃣ Não logado → Login
+    if (usuarioId == null || empresaId == null) {
+      setState(() => _startScreen = const LoginScreen());
+      return;
+    }
+
+    // 2️⃣ Logado → Home (SEM BLOQUEIO)
+    setState(() => _startScreen = HomeScreen(
+      usuarioId: usuarioId,
+      empresaId: empresaId,
+      plano: planoUser,
+      email: email,
+    ));
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Tooca CRM',
-      debugShowCheckedModeBanner: false,
       navigatorKey: globalNavigatorKey,
+      debugShowCheckedModeBanner: false,
+      title: 'Tooca CRM',
 
       theme: ThemeData(
         useMaterial3: false,
         fontFamily: 'Segoe UI',
-        visualDensity: VisualDensity.standard,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFFFFC107),
-          primary: const Color(0xFFFFC107),
-          secondary: Colors.black,
-        ),
         scaffoldBackgroundColor: const Color(0xFFF5F5F5),
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xFFFFC107),
           foregroundColor: Colors.black,
-          elevation: 1,
           centerTitle: true,
+        ),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFFFFC107),
         ),
       ),
 
-      builder: (context, child) {
-        return MediaQuery(
-          data: MediaQuery.of(context).copyWith(textScaleFactor: 1.0),
-          child: child!,
-        );
-      },
-
-      // ============================================================
-      // 🚀 Fluxo correto: SEMPRE inicia pelo SplashScreen
-      // ============================================================
-      home: const SplashScreen(),
+      home: _startScreen,
     );
   }
 }

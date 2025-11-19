@@ -1,19 +1,19 @@
 // =============================================================
-// 🗂️ TOOCA CRM - Pedidos Offline (v8.0 EVA SUPREMO BLOQUEIO)
+// 🗂️ TOOCA CRM - Pedidos Offline (v9.0 EVA CLEAN SEM BLOQUEIO)
 // -------------------------------------------------------------
-// ✔ Bloqueio TOTAL se empresa expirada (Editar/Visualizar/Enviar)
-// ✔ Apenas exclusão e listagem continuam funcionando offline
-// ✔ Usa fluxo unificado do SaaS (empresaAtivaLocal + consultarStatus)
-// ✔ Se expirar → TelaBloqueio imediatamente
+// ✔ NENHUM bloqueio dentro desta tela
+// ✔ Bloqueio agora existe SOMENTE no Login e SOMENTE no Sincronizar Geral
+// ✔ Editar / Visualizar / Sincronizar OFFLINE SEM restrições
+// ✔ Reescrito para estabilidade total e velocidade
 // =============================================================
 
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'sincronizacao_service.dart';
 import 'novo_pedido_screen.dart';
 import 'visualizar_pdf_screen.dart';
+import 'sincronizacao_service.dart';
 
 class PedidosOfflineScreen extends StatefulWidget {
   final int usuarioId;
@@ -39,7 +39,7 @@ class _PedidosOfflineScreenState extends State<PedidosOfflineScreen> {
   }
 
   // ============================================================
-  // 🔄 Carrega pedidos offline (por empresa)
+  // 📦 Carrega pedidos offline
   // ============================================================
   Future<List<Map<String, dynamic>>> _carregarPendentes() async {
     final prefs = await SharedPreferences.getInstance();
@@ -48,16 +48,17 @@ class _PedidosOfflineScreenState extends State<PedidosOfflineScreen> {
 
     return fila.map((s) {
       final reg = jsonDecode(s);
+
       final bool temTipo = reg is Map && reg.containsKey('tipo');
       final Map<String, dynamic> dados =
       temTipo ? Map<String, dynamic>.from(reg['dados'] ?? {}) : Map<String, dynamic>.from(reg);
 
       double total = 0.0;
+
       if (dados['total'] != null) {
         total = (dados['total'] as num).toDouble();
       } else {
-        final itens = (dados['itens'] as List<dynamic>? ?? []);
-        for (final it in itens) {
+        for (final it in (dados['itens'] ?? [])) {
           final qtd = (it['qtd'] ?? it['quantidade'] ?? 0) as num;
           final preco = (it['preco'] ?? it['preco_unit'] ?? 0) as num;
           total += qtd.toDouble() * preco.toDouble();
@@ -67,7 +68,6 @@ class _PedidosOfflineScreenState extends State<PedidosOfflineScreen> {
       return {
         'raw': s,
         'tipo': temTipo ? (reg['tipo'] ?? 'novo') : 'novo',
-        'pedido_id': temTipo ? reg['pedido_id'] : null,
         'cliente_nome': (dados['cliente_nome'] ?? 'Cliente Offline').toString(),
         'tabela_nome': (dados['tabela_nome'] ?? '---').toString(),
         'condicao_nome': (dados['condicao_nome'] ?? '---').toString(),
@@ -78,36 +78,7 @@ class _PedidosOfflineScreenState extends State<PedidosOfflineScreen> {
   }
 
   // ============================================================
-  // 🔐 BLOQUEIO GLOBAL
-  // ============================================================
-  Future<bool> _bloqueioSeNecessario() async {
-    final ativoLocal = await SincronizacaoService.empresaAtivaLocal();
-    if (!ativoLocal) {
-      final prefs = await SharedPreferences.getInstance();
-      SincronizacaoService.irParaBloqueio(
-        prefs.getString('plano_empresa') ?? 'free',
-        prefs.getString('empresa_expira') ?? '',
-      );
-      return false;
-    }
-
-    await SincronizacaoService.consultarStatusEmpresa();
-
-    final ativoDepois = await SincronizacaoService.empresaAtivaLocal();
-    if (!ativoDepois) {
-      final prefs = await SharedPreferences.getInstance();
-      SincronizacaoService.irParaBloqueio(
-        prefs.getString('plano_empresa') ?? 'free',
-        prefs.getString('empresa_expira') ?? '',
-      );
-      return false;
-    }
-
-    return true;
-  }
-
-  // ============================================================
-  // 🗑️ Remover pedido local
+  // 🗑 Remover pedido
   // ============================================================
   Future<void> _remover(String rawJson) async {
     final prefs = await SharedPreferences.getInstance();
@@ -119,11 +90,9 @@ class _PedidosOfflineScreenState extends State<PedidosOfflineScreen> {
   }
 
   // ============================================================
-  // 📡 SINCRONIZAR (bloqueado se expirada)
+  // 📡 Sincronizar (SEM bloqueio)
   // ============================================================
   Future<void> _sincronizarAgora() async {
-    if (!await _bloqueioSeNecessario()) return;
-
     await SincronizacaoService.enviarPedidosPendentes(
       context,
       widget.usuarioId,
@@ -134,29 +103,10 @@ class _PedidosOfflineScreenState extends State<PedidosOfflineScreen> {
   }
 
   // ============================================================
-  // ✏️ Editar (bloqueado se expirada)
+  // ✏️ Editar (SEM bloqueio)
   // ============================================================
-  void _editar(Map<String, dynamic> pedido, int filaIndex) async {
-    if (!await _bloqueioSeNecessario()) return;
-
-    final raw = pedido['dados'];
-    Map<String, dynamic> dados = <String, dynamic>{};
-
-    if (raw is Map) {
-      dados = raw.map((k, v) => MapEntry(k.toString(), v));
-    } else if (raw is String) {
-      try {
-        final dec = jsonDecode(raw);
-        if (dec is Map) dados = dec.map((k, v) => MapEntry(k.toString(), v));
-      } catch (_) {}
-    }
-
-    if (dados.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Pedido offline inválido.')),
-      );
-      return;
-    }
+  void _editar(Map<String, dynamic> pedido, int filaIndex) {
+    final dados = pedido['dados'] ?? {};
 
     Navigator.push(
       context,
@@ -164,40 +114,23 @@ class _PedidosOfflineScreenState extends State<PedidosOfflineScreen> {
         builder: (_) => NovoPedidoScreen(
           usuarioId: widget.usuarioId,
           empresaId: widget.empresaId,
-          plano: 'free',
+          plano: "free",
           pedidoId: null,
           isAdmin: false,
           pedidoRascunho: dados,
           filaIndex: filaIndex,
         ),
       ),
-    );
+    ).then((_) {
+      setState(() => _future = _carregarPendentes());
+    });
   }
 
   // ============================================================
-  // 👁️ Visualizar (bloqueado se expirada)
+  // 👁 Visualizar (SEM bloqueio)
   // ============================================================
-  void _visualizarOffline(Map<String, dynamic> pedido) async {
-    if (!await _bloqueioSeNecessario()) return;
-
-    final raw = pedido['dados'];
-    Map<String, dynamic> dados = <String, dynamic>{};
-
-    if (raw is Map) {
-      dados = raw.map((k, v) => MapEntry(k.toString(), v));
-    } else if (raw is String) {
-      try {
-        final dec = jsonDecode(raw);
-        if (dec is Map) dados = dec.map((k, v) => MapEntry(k.toString(), v));
-      } catch (_) {}
-    }
-
-    if (dados.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Pedido offline inválido.')),
-      );
-      return;
-    }
+  void _visualizarOffline(Map<String, dynamic> pedido) {
+    final dados = pedido['dados'] ?? {};
 
     Navigator.push(
       context,
@@ -206,7 +139,7 @@ class _PedidosOfflineScreenState extends State<PedidosOfflineScreen> {
           pedidoOffline: dados,
           usuarioId: widget.usuarioId,
           empresaId: widget.empresaId,
-          plano: 'free',
+          plano: "free",
           isAdmin: false,
         ),
       ),
@@ -214,7 +147,7 @@ class _PedidosOfflineScreenState extends State<PedidosOfflineScreen> {
   }
 
   // ============================================================
-  // 🖥️ UI
+  // 🧱 UI
   // ============================================================
   @override
   Widget build(BuildContext context) {
@@ -227,8 +160,8 @@ class _PedidosOfflineScreenState extends State<PedidosOfflineScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.cloud_upload),
-            tooltip: 'Sincronizar agora',
             onPressed: _sincronizarAgora,
+            tooltip: "Enviar pedidos pendentes",
           ),
         ],
       ),
@@ -240,8 +173,11 @@ class _PedidosOfflineScreenState extends State<PedidosOfflineScreen> {
           }
 
           final itens = snap.data ?? [];
+
           if (itens.isEmpty) {
-            return const Center(child: Text("Nenhum pedido offline salvo."));
+            return const Center(
+              child: Text("Nenhum pedido offline salvo."),
+            );
           }
 
           return ListView.separated(
@@ -253,10 +189,15 @@ class _PedidosOfflineScreenState extends State<PedidosOfflineScreen> {
               final totalStr = p['total'].toStringAsFixed(2);
 
               return Card(
-                elevation: 1,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 2,
                 child: ListTile(
-                  title: Text('${p['cliente_nome']} | Total: R\$ $totalStr'),
+                  title: Text(
+                    '${p['cliente_nome']} | Total: R\$ $totalStr',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   subtitle: Text(
                     'Tabela: ${p['tabela_nome']} | Condição: ${p['condicao_nome']}',
                   ),
@@ -299,8 +240,14 @@ class _PedidosOfflineScreenState extends State<PedidosOfflineScreen> {
         title: const Text('Excluir pedido offline?'),
         content: const Text('Esta ação não pode ser desfeita.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Excluir')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Excluir'),
+          ),
         ],
       ),
     );

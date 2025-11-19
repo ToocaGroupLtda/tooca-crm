@@ -1,11 +1,11 @@
 // =============================================================
-// 🏠 TOOCA CRM - HOME SCREEN (v7.3 EVA SUPREMA)
+// 🏠 TOOCA CRM - HOME SCREEN (v8.2 EVA SUPREMA FINAL)
 // -------------------------------------------------------------
-// ✔ 100% alinhada com Splash + SincronizacaoService
-// ✔ Usa empresaAtivaLocal() (mesma regra do app todo)
-// ✔ Consulta SaaS antes de abrir qualquer funcionalidade
-// ✔ Bloqueio global unificado
-// ✔ Fluxo seguro e sem inconsistências
+// ✔ NUNCA consulta SaaS automaticamente (somente no Sincronizar)
+// ✔ Bloqueio 100% alinhado com Login + Splash
+// ✔ Usa apenas empresa_status + empresa_expira
+// ✔ Nunca sobrescreve sessão válida com dados antigos
+// ✔ Fluxo estável e sem quedas na TelaBloqueio
 // =============================================================
 
 import 'package:flutter/material.dart';
@@ -50,48 +50,38 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // =============================================================
-  // 🔍 CARREGAR DADOS LOCAIS
+  // 🔍 CARREGAR DADOS DA SESSÃO (SEM CONSULTAR NADA)
   // =============================================================
   Future<void> carregarSessao() async {
     final prefs = await SharedPreferences.getInstance();
 
     nomeUsuario = prefs.getString("nome") ?? "";
     planoEmpresa = prefs.getString("plano_empresa") ?? "free";
-    empresaExpira = prefs.getString("empresa_expira") ?? "";
+    empresaExpira = prefs.getString("data_expiracao") ?? "";
+
 
     debugPrint(
-        "🟢 HOME Sessão → user=${widget.usuarioId} | empresa=${widget.empresaId} | plano=$planoEmpresa | expira=$empresaExpira"
+        "🏠 HOME v8.2 Sessão carregada → "
+            "user=${widget.usuarioId} | empresa=${widget.empresaId} | plano=$planoEmpresa | expira=$empresaExpira"
     );
 
     setState(() {});
   }
 
   // =============================================================
-  // ✔ REGRA OFICIAL v7.3 (mesma do Splash)
+  // ✔ VALIDAÇÃO OFICIAL (SEM RECONSULTAR SAAS)
   // =============================================================
   Future<bool> validarEmpresa() async {
-    // 1️⃣ Verifica local
-    final ativaLocal = await SincronizacaoService.empresaAtivaLocal();
-    if (!ativaLocal) {
+    final ativa = await SincronizacaoService.empresaAtivaLocal();
+    if (!ativa) {
       _bloquear();
       return false;
     }
-
-    // 2️⃣ Consulta SaaS
-    await SincronizacaoService.consultarStatusEmpresa();
-
-    // 3️⃣ Revalida local após atualização SaaS
-    final ativa2 = await SincronizacaoService.empresaAtivaLocal();
-    if (!ativa2) {
-      _bloquear();
-      return false;
-    }
-
     return true;
   }
 
   // =============================================================
-  // 🚫 ABRIR TELA DE BLOQUEIO GLOBAL
+  // 🚫 IR PARA TELA DE BLOQUEIO (GLOBAL)
   // =============================================================
   void _bloquear() {
     Navigator.pushReplacement(
@@ -106,7 +96,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // =============================================================
-  // 🚪 SAIR
+  // 🚪 SAIR DO APP
   // =============================================================
   Future<void> sair() async {
     final prefs = await SharedPreferences.getInstance();
@@ -126,6 +116,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
+
       appBar: AppBar(
         backgroundColor: const Color(0xFFFFC107),
         foregroundColor: Colors.black,

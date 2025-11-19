@@ -759,6 +759,8 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
               }
 
 
+              final termoAtual = buscaCtrl.text; // 🔥 salva pesquisa
+
               setState(() {
                 if (isEdit) {
                   itens[index!] = novoItem;
@@ -766,6 +768,11 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
                   itens.add(novoItem);
                 }
               });
+
+// 🔥 limpa o campo de busca de produtos
+              buscaCtrl.clear();
+              // 🔥 restaura pesquisa
+
 
               salvarRascunho();
               Navigator.pop(context);
@@ -991,7 +998,7 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
       return termo.isNotEmpty &&
           (p['nome'].toString().toLowerCase().contains(termo) ||
               p['codigo'].toString().contains(termo));
-    }).toList();
+    }).take(50).toList(); // 🚀 LIMITA A 50 RESULTADOS
 
     return WillPopScope(
       onWillPop: confirmarSaida,
@@ -1002,270 +1009,307 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
           backgroundColor: const Color(0xFFFFCC00),
           foregroundColor: Colors.black,
         ),
-        body: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            children: [
-              TextField(
-                controller: clienteBuscaCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Buscar Cliente por Nome ou CNPJ',
-                  suffixIcon: Icon(Icons.search),
-                ),
-                onChanged: buscarClientesOffline,
-              ),
-              if (sugestoesClientes.isNotEmpty)
-                SizedBox(
-                  height: 250,
-                  child: ListView(
-                    children: sugestoesClientes.map((cliente) {
-                      return ListTile(
-                        // CORREÇÃO CLIENTE — Remove fantasia/endereço do campo de seleção
-                        title: Text(
-                          "${cliente['cnpj']} • ${cliente['nome']}",
-                          style: const TextStyle(color: Color(0xFF333333)),
+          body: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              children: [
+                Expanded(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+
+                        // =======================
+                        // BUSCA CLIENTE
+                        // =======================
+                        TextField(
+                          controller: clienteBuscaCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Buscar Cliente por Nome ou CNPJ',
+                            suffixIcon: Icon(Icons.search),
+                          ),
+                          onChanged: buscarClientesOffline,
                         ),
 
-                        onTap: () {
-                          setState(() {
-                            clienteId = int.tryParse(cliente['id'].toString());
-                            // CORREÇÃO CLIENTE — Apenas nome (sem endereço, sem fantasia)
-                            clienteBuscaCtrl.text = cliente['nome'] ?? '';
+                        if (sugestoesClientes.isNotEmpty)
+                          ListView.builder(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            itemCount: sugestoesClientes.length,
+                            itemBuilder: (context, index) {
+                              final cliente = sugestoesClientes[index];
+                              return ListTile(
+                                title: Text("${cliente['cnpj']} • ${cliente['nome']}"),
+                                onTap: () {
+                                  setState(() {
+                                    clienteId = int.tryParse(cliente['id'].toString());
+                                    clienteBuscaCtrl.text = cliente['nome'] ?? '';
+                                    sugestoesClientes.clear();
+                                  });
+                                  salvarRascunho();
+                                },
+                              );
+                            },
+                          ),
 
-                            sugestoesClientes.clear();
-                          });
-                          salvarRascunho();
-                        },
-                      );
-                    }).toList(),
+                        // =======================
+                        // TABELA DE PREÇO
+                        // =======================
+                        DropdownButtonFormField<String>(
+                          value: _tabelaSelecionada,
+                          decoration: const InputDecoration(labelText: 'Tabela de Preço'),
+                          items: [
+                            ...tabelas.map((t) {
+                              final idStr = '${t['id']}';
+                              return DropdownMenuItem(
+                                value: idStr,
+                                child: Text('${t['nome']}'),
+                              );
+                            }).toList(),
+                          ],
+                          onChanged: (value) {
+                            setState(() {
+                              _tabelaSelecionada = value;
+                              tabelaId = int.tryParse(value ?? '') ?? 0;
+                            });
+                            recalcPrecosItensPorTabela(tabelaId);
+                            salvarRascunho();
+                          },
+                        ),
+
+                        const SizedBox(height: 10),
+
+                        // =======================
+                        // CONDIÇÃO DE PAGAMENTO
+                        // =======================
+                        DropdownButtonFormField<int>(
+                          value: condicoes.any((c) => int.tryParse('${c['id']}') == condicaoId)
+                              ? condicaoId
+                              : null,
+                          decoration: const InputDecoration(labelText: 'Condição de Pagamento'),
+                          items: condicoes.map((c) {
+                            final id = int.tryParse('${c['id']}') ?? 0;
+                            final nome = c['nome'] ?? '---';
+                            final dias = c['dias'] ?? '';
+
+                            return DropdownMenuItem<int>(
+                              value: id,
+                              child: Text(
+                                '$nome${dias != 0 ? " (${dias} dias)" : ""}',
+                              ),
+                            );
+                          }).toList(),
+                          onChanged: (v) {
+                            if (v != null) {
+                              setState(() => condicaoId = v);
+                              salvarRascunho();
+                            }
+                          },
+                        ),
+
+                        const SizedBox(height: 10),
+
+                        // =======================
+                        // OBSERVAÇÃO
+                        // =======================
+                        TextField(
+                          controller: obsCtrl,
+                          decoration: const InputDecoration(labelText: 'Observação'),
+                          onChanged: (_) => salvarRascunho(),
+                        ),
+
+                        const SizedBox(height: 20),
+
+                        // =======================
+                        // BUSCA PRODUTO
+                        // =======================
+                        TextField(
+                          controller: buscaCtrl,
+                          decoration: const InputDecoration(labelText: 'Buscar Produto'),
+                          onChanged: (_) => setState(() {}),
+                        ),
+
+                        if (produtosFiltrados.isNotEmpty)
+                          ListView.builder(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            itemCount: produtosFiltrados.length,
+                            itemBuilder: (context, idx) {
+                              final p = produtosFiltrados[idx];
+                              final base = buscarPrecoPorTabela(
+                                Map<String, dynamic>.from(p),
+                                tabelaId,
+                              );
+
+                              return ListTile(
+                                title: Text(p['nome'] ?? ''),
+                                subtitle: Text(
+                                  base > 0
+                                      ? 'Cód: ${p['codigo']} | R\$ ${base.toStringAsFixed(2)}'
+                                      : 'Cód: ${p['codigo']} • sem preço nesta tabela',
+                                ),
+                                trailing: const Icon(Icons.add_circle, color: Colors.green),
+                                onTap: () {
+                                  if (tabelaId == null || tabelaId == 0) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(content: Text('Selecione a Tabela de Preço.')),
+                                    );
+                                    return;
+                                  }
+
+                                  // ============================
+                                  // 🚫 VERIFICA SE JÁ EXISTE
+                                  // ============================
+                                  final codigo = p['codigo'].toString();
+                                  final indexExistente = itens.indexWhere(
+                                          (item) => item['codigo'].toString() == codigo);
+
+                                  if (indexExistente != -1) {
+                                    showDialog(
+                                      context: context,
+                                      builder: (_) => AlertDialog(
+                                        title: const Text('Item já adicionado'),
+                                        content: Text(
+                                          'O produto "$codigo - ${p['nome']}" já está no pedido.\n\n'
+                                              'Deseja editar o item existente?',
+                                        ),
+                                        actions: [
+                                          TextButton(
+                                            child: const Text('Cancelar'),
+                                            onPressed: () => Navigator.pop(context),
+                                          ),
+                                          ElevatedButton(
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: Color(0xFFFFCC00),
+                                              foregroundColor: Colors.black,
+                                            ),
+                                            child: const Text('Editar'),
+                                            onPressed: () {
+                                              Navigator.pop(context);
+                                              abrirPopupItem(index: indexExistente);
+                                            },
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                    return;
+                                  }
+
+                                  // ============================
+                                  // ✨ NÃO EXISTE → ADICIONA
+                                  // ============================
+                                  abrirPopupItem(produto: p, precoForcado: base);
+                                },
+                              );
+                            },
+                          ),
+
+
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          color: Color(0xFFFFCC00),
+                          child: const Text(
+                            "Itens do Pedido",
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black,
+                            ),
+                          ),
+                        ),
+                        SizedBox(height: 10),
+
+                        // =======================
+                        // ITENS (SEM LISTVIEW)
+                        // =======================
+                        Column(
+                          children: itens.asMap().entries.map((e) {
+                            final i = e.key;
+                            final item = e.value;
+                            final subtotal = item['qtd'] * item['preco'];
+
+                            return ListTile(
+                              title: Text("${item['codigo']} - ${item['nome']}"),
+                              subtitle: Text(
+                                "Qtd: ${item['qtd']} | "
+                                    "Unit: R\$ ${item['preco'].toStringAsFixed(2)} | "
+                                    "Sub: R\$ ${subtotal.toStringAsFixed(2)}",
+                              ),
+                              onTap: () => abrirPopupItem(index: i),
+                              trailing: IconButton(
+                                icon: const Icon(Icons.delete, color: Colors.red),
+                                onPressed: () {
+                                  setState(() => itens.removeAt(i));
+                                  salvarRascunho();
+                                },
+                              ),
+                            );
+                          }).toList(),
+                        ),
+
+                        const Divider(height: 30),
+
+                        // =======================
+                        // DESCONTO GERAL
+                        // =======================
+                        TextField(
+                          decoration: const InputDecoration(labelText: 'Desconto Geral %'),
+                          keyboardType: TextInputType.number,
+                          onChanged: (v) {
+                            final novoDesconto =
+                                double.tryParse(v.replaceAll(',', '.')) ?? 0;
+                            descontoGeral = novoDesconto;
+                            aplicarDescontoGeral();
+                          },
+                        ),
+
+                        const SizedBox(height: 20),
+
+                        Text(
+                          'Total: R\$ ${calcularTotal().toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 18,
+                          ),
+                        ),
+
+                        const SizedBox(height: 20),
+                      ],
+                    ),
                   ),
                 ),
 
-              // --- DROPDOWN TABELA DE PREÇO ---
-              DropdownButtonFormField<String>(
-                value: _tabelaSelecionada?.isNotEmpty == true ? _tabelaSelecionada : null,
-                decoration: const InputDecoration(labelText: 'Tabela de Preço'),
-                items: [
-                  // 🔹 Exibe apenas as tabelas reais do SQL
-                  ...tabelas.map((t) {
-                    final idStr = '${t['id']}';
-                    return DropdownMenuItem<String>(
-                      value: idStr,
-                      child: Text('${t['nome']}'),
-                    );
-                  }),
-
-                  // 🔹 Caso tenha uma tabela salva no pedido que não exista mais
-                  if (_tabelaSelecionada != null &&
-                      tabelas.every((t) => '${t['id']}' != _tabelaSelecionada))
-                    DropdownMenuItem<String>(
-                      value: _tabelaSelecionada!,
-                      child: Text(
-                        'Tabela $_tabelaSelecionada',
-                        style: const TextStyle(color: Colors.grey),
-                      ),
-                    ),
-                ],
-                onChanged: (value) {
-                  setState(() {
-                    _tabelaSelecionada = value;
-                    final parsed = int.tryParse(value ?? '');
-                    tabelaId = parsed ?? 0;
-                  });
-                  recalcPrecosItensPorTabela(tabelaId);
-                  salvarRascunho();
-                },
-              ),
-
-
-
-// --- DROPDOWN CONDIÇÃO ---
-              // --- DROPDOWN CONDIÇÃO DE PAGAMENTO ---
-              // --- DROPDOWN CONDIÇÃO DE PAGAMENTO ---
-              DropdownButtonFormField<int>(
-                value: condicoes.any((c) => int.tryParse('${c['id']}') == condicaoId)
-                    ? condicaoId
-                    : null,
-                decoration: const InputDecoration(labelText: 'Condição de Pagamento'),
-                items: (condicoes.isNotEmpty
-                    ? condicoes
-                    : [
-                  // fallback se não houver condições carregadas
-                  {'id': 1, 'nome': 'À vista', 'dias': 0},
-                  {'id': 2, 'nome': '30 dias', 'dias': 30},
-                  {'id': 3, 'nome': '60 dias', 'dias': 60},
-                ])
-                    .map((c) {
-                  final id = int.tryParse('${c['id']}') ?? 0;
-                  final nome = (c['nome']?.toString().trim().isNotEmpty ?? false)
-                      ? c['nome'].toString()
-                      : (c['descricao'] ?? 'Sem nome');
-                  final dias = (c['dias'] ?? '').toString();
-
-                  return DropdownMenuItem<int>(
-                    value: id,
-                    child: Text(
-                      '$nome${dias.isNotEmpty && dias != "0" ? " ($dias dias)" : ""}',
-                    ),
-                  );
-                }).toList(),
-                onChanged: (int? v) {
-                  if (v != null) {
-                    setState(() => condicaoId = v);
-                    salvarRascunho();
-                  }
-                },
-              ),
-
-
-              TextField(
-                controller: obsCtrl,
-                decoration: const InputDecoration(labelText: 'Observação'),
-                onChanged: (_) => salvarRascunho(),
-              ),
-              const SizedBox(height: 10),
-
-              TextField(
-                controller: buscaCtrl,
-                decoration: const InputDecoration(labelText: 'Buscar Produto'),
-                onChanged: (_) => setState(() {}),
-              ),
-
-                  if (produtosFiltrados.isNotEmpty)
-              SizedBox(
-                height: 150,
-                child: ListView(
-                  children: produtosFiltrados.map((p) {
-                    // preço BASE (sem desconto) da tabela atual
-                    final double base = buscarPrecoPorTabela(
-                      Map<String, dynamic>.from(p),
-                      tabelaId,
-                    );
-
-
-                    final temPreco = base > 0;
-                    final cod = (p['codigo'] ?? '').toString();
-                    final nome = (p['nome'] ?? '').toString();
-
-                    return ListTile(
-                      title: Text(
-                        nome,
-                        style: const TextStyle(color: Color(0xFF333333)),
-                      ),
-                      subtitle: Text(
-                        temPreco
-                            ? 'Cód: $cod | R\$ ${base.toStringAsFixed(2)}'
-                            : 'Cód: $cod • sem preço nesta tabela',
-                        style: const TextStyle(color: Color(0xFF333333)),
-                      ),
-                      trailing: const Icon(Icons.add_circle, color: Colors.green),
-                      onTap: () {
-                        if (tabelaId == null || tabelaId == 0) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Selecione a Tabela de Preço antes de adicionar.')),
-                          );
-                          return;
-                        }
-
-                        // Garante campos básicos para o popup
-                        p['nome'] ??= '';
-                        p['codigo'] ??= '';
-
-                        if (!temPreco) {
-                          // você pode trocar por “return;” se preferir bloquear a inclusão sem preço
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Produto $cod sem preço na tabela selecionada.')),
-                          );
-                          return;
-                        }
-
-                        // Abre o popup passando o PREÇO BASE da tabela (sem desconto).
-                        abrirPopupItem(produto: p, precoForcado: base);
-                      },
-                    );
-                  }).toList(),
-                ),
-              ),
-
-              const Divider(),
-              const Text('Itens do Pedido', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF333333))),
-              Expanded(
-                child: ListView(
-                  children: itens.asMap().entries.map((e) {
-                    final i = e.key;
-                    final item = e.value;
-                    final subtotal = item['qtd'] * item['preco'];
-                    return ListTile(
-                      title: Text(
-                        '${(item['codigo']?.toString().trim().isEmpty ?? true) ? '-' : item['codigo']} - '
-                            '${(item['nome']?.toString().trim().isEmpty ?? true) ? '-' : item['nome']}',
-                        style: const TextStyle(color: Color(0xFF333333)),
-                      ),
-                      subtitle: Text(
-                        'Qtd: ${item['qtd']} | Unit: R\$ ${item['preco'].toStringAsFixed(2)} | '
-                            'Desc: ${item['desconto']}% | Sub: R\$ ${subtotal.toStringAsFixed(2)}',
-                        style: const TextStyle(color: Color(0xFF333333)),
-                      ),
-                      onTap: () => abrirPopupItem(index: i),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.delete, color: Colors.red),
-                        onPressed: () {
-                          setState(() => itens.removeAt(i));
-                          salvarRascunho();
-                        },
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ),
-
-              const Divider(),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      decoration: const InputDecoration(labelText: 'Desconto Geral %'),
-                      keyboardType: TextInputType.number,
-                      onChanged: (v) {
-                        final novoDesconto = double.tryParse(v.replaceAll(',', '.')) ?? 0;
-                        descontoGeral = novoDesconto;
-                        aplicarDescontoGeral();
-                      },
-                    ),
+                // =======================
+                // BOTÃO FINAL FIXO
+                // =======================
+                ElevatedButton.icon(
+                  icon: enviando
+                      ? const CircularProgressIndicator(strokeWidth: 2, color: Colors.black)
+                      : const Icon(Icons.check, color: Colors.black),
+                  label: Text(
+                    enviando
+                        ? 'Salvando...'
+                        : (!_isOnline && widget.pedidoId == null
+                        ? 'Salvar offline'
+                        : (!_isOnline && widget.pedidoId != null
+                        ? 'Atualizar offline'
+                        : (widget.pedidoId == null
+                        ? 'Salvar Pedido'
+                        : 'Atualizar Pedido'))),
+                    style: const TextStyle(color: Colors.black),
                   ),
-                ],
-              ),
-              const SizedBox(height: 10),
-
-              Text(
-                'Total: R\$ ${calcularTotal().toStringAsFixed(2)}',
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF333333)),
-              ),
-
-              const SizedBox(height: 10),
-              ElevatedButton.icon(
-                icon: enviando
-                    ? const CircularProgressIndicator(strokeWidth: 2, color: Colors.black)
-                    : const Icon(Icons.check, color: Colors.black),
-                label: Text(
-                  enviando
-                      ? 'Salvando...'
-                      : (!_isOnline && widget.pedidoId == null
-                      ? 'Salvar offline'
-                      : (!_isOnline && widget.pedidoId != null
-                      ? 'Atualizar offline'
-                      : (widget.pedidoId == null ? 'Salvar Pedido' : 'Atualizar Pedido'))),
-                  style: const TextStyle(color: Colors.black),
+                  onPressed: enviando ? null : enviarPedido,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFFCC00),
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  ),
                 ),
-                onPressed: enviando ? null : enviarPedido,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFFFCC00),
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                ),
-              ),
-            ],
-          ),
-        ),
+              ],
+            ),
+          )
+
       ),
     );
   }

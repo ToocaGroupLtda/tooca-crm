@@ -45,32 +45,17 @@ class _ProdutosScreenState extends State<ProdutosScreen> {
   // ============================================================
   // 🔐 VALIDAÇÃO COMPLETA (Local + SaaS)
   // ============================================================
+  // ============================================================
+// 🔄 Carregar sem bloqueio (Produtos nunca bloqueia)
+// ============================================================
   Future<void> _validarAntesDeCarregar() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    // 1️⃣ LOCAL
-    if (!await SincronizacaoService.empresaAtivaLocal()) {
-      SincronizacaoService.irParaBloqueio(
-        prefs.getString('plano_empresa') ?? 'free',
-        prefs.getString('empresa_expira') ?? '',
-      );
-      return;
-    }
-
-    // 2️⃣ CONSULTA REAL
+    // Atualiza status online (mas NÃO bloqueia)
     await SincronizacaoService.consultarStatusEmpresa();
 
-    // 3️⃣ LOCAL DE NOVO
-    if (!await SincronizacaoService.empresaAtivaLocal()) {
-      SincronizacaoService.irParaBloqueio(
-        prefs.getString('plano_empresa') ?? 'free',
-        prefs.getString('empresa_expira') ?? '',
-      );
-      return;
-    }
-
-    carregarProdutos();
+    // Sempre tenta carregar produtos
+    await carregarProdutos();
   }
+
 
   // ============================================================
   // 🔄 Carrega produtos (tenta online → fallback offline)

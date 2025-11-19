@@ -1,11 +1,11 @@
 // =============================================================
-// 🔐 TOOCA CRM - LOGIN SCREEN (v8.0 EVA SUPREMA FINAL)
+// 🔐 TOOCA CRM - LOGIN SCREEN (v8.1 EVA SUPREMA FINAL)
 // -------------------------------------------------------------
-// ✔ Leitura correta da API login.php
-// ✔ Usa exatamente os campos reais: plano_empresa + data_expiracao
-// ✔ Bloqueio imediato somente se realmente expirado
-// ✔ Sessão limpa antes de salvar (sem cache velho)
-// ✔ Totalmente compatível com Splash + Home + Sincronização v7
+// ✔ Bloqueio somente aqui (e na SincronizarScreen)
+// ✔ Usa empresa_status + data_expiracao exatamente como API
+// ✔ NÃO bloqueia datas vazias ou inválidas
+// ✔ Sessão limpa antes de salvar
+// ✔ 100% compatível com Splash, Home e Sincronização v7.6
 // =============================================================
 
 import 'dart:convert';
@@ -30,7 +30,7 @@ class _LoginScreenState extends State<LoginScreen> {
   bool mostrarSenha = false;
 
   // ==========================================================
-  // 🔑 LOGIN (v8.0)
+  // 🔑 LOGIN PRINCIPAL
   // ==========================================================
   Future<void> _fazerLogin() async {
     final email = emailCtrl.text.trim();
@@ -50,8 +50,14 @@ class _LoginScreenState extends State<LoginScreen> {
 
       final response = await http.post(
         url,
-        headers: {'Content-Type': 'application/json; charset=utf-8'},
-        body: jsonEncode({'email': email, 'senha': senha}),
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Accept": "application/json",
+        },
+        body: jsonEncode({
+          "email": email,
+          "senha": senha,
+        }),
       );
 
       dynamic data;
@@ -72,80 +78,76 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       // ==============================================================
-      // ✔ DADOS DO USUÁRIO
+      // ✔ PEGAR DADOS DO JSON
       // ==============================================================
       final usuarioId = data['usuario_id'] ?? 0;
       final empresaId = data['empresa_id'] ?? 0;
-      final emailUser = email;
       final nomeUser = data['nome'] ?? "Usuário";
       final planoUser = data['plano_usuario'] ?? "free";
 
-      // ==============================================================
-      // ✔ DADOS REAIS DE PLANO/EXPIRAÇÃO DA EMPRESA
-      // (EXATAMENTE COMO A API ENVIA)
-      // ==============================================================
-      String planoEmpresa = data['plano_empresa'] ?? "free";
+      final planoEmpresa = data['plano_empresa'] ?? "free";
+      final empresaStatus = data['empresa_status'] ?? 'ativo';
 
-      // A API retorna SEMPRE neste campo:
-      String expiraBruta = data['data_expiracao'] ?? "";
+      final expiraRaw = data['data_expiracao'] ?? "";
+      final expiraEmpresa = _normalizarData(expiraRaw);
 
-      // Normaliza formato YYYY-MM-DD
-      String expiraEmpresa = _normalizarData(expiraBruta);
-
-      debugPrint("🔍 Plano Empresa = $planoEmpresa | Expira = $expiraEmpresa");
+      debugPrint("🔍 planoEmpresa=$planoEmpresa | status=$empresaStatus | expira=$expiraEmpresa");
 
       // ==============================================================
-      // 🧹 LIMPAR CACHE ANTIGO PARA EVITAR SALVAR VALORES VELHOS
+      // 🛡️ BLOQUEIO SOMENTE NO LOGIN
+      // ==============================================================
+      // Empresa inativa → bloqueia
+      if (empresaStatus != 'ativo') {
+        _irPara(TelaBloqueio(
+          planoEmpresa: planoEmpresa,
+          empresaExpira: expiraEmpresa,
+        ));
+        return;
+      }
+
+      // Empresa expirada → bloqueia
+      if (!_empresaAtiva(expiraEmpresa)) {
+        _irPara(TelaBloqueio(
+          planoEmpresa: planoEmpresa,
+          empresaExpira: expiraEmpresa,
+        ));
+        return;
+      }
+
+      // ==============================================================
+      // 🧹 LIMPAR SESSÃO
       // ==============================================================
       final prefs = await SharedPreferences.getInstance();
-
-      await prefs.remove('plano_empresa');
-      await prefs.remove('empresa_expira');
-      await prefs.remove('plano_usuario');
-      await prefs.remove('usuario_id');
-      await prefs.remove('empresa_id');
+      await prefs.clear();
+      await prefs.reload();
 
       // ==============================================================
-      // ✔ SALVAR SESSÃO NOVA
+      // ✔ SALVAR NOVA SESSÃO
       // ==============================================================
       await prefs.setInt('usuario_id', usuarioId);
       await prefs.setInt('empresa_id', empresaId);
 
-      await prefs.setString('email', emailUser);
+      await prefs.setString('email', email);
       await prefs.setString('nome', nomeUser);
-      await prefs.setString('plano_usuario', planoUser);
 
+      await prefs.setString('plano_usuario', planoUser);
       await prefs.setString('plano_empresa', planoEmpresa);
+      await prefs.setString('empresa_status', empresaStatus);
       await prefs.setString('empresa_expira', expiraEmpresa);
 
       debugPrint("🟢 Sessão salva com sucesso.");
 
       // ==============================================================
-      // ✔ BLOQUEAR SE REALMENTE EXPIRADO
-      // ==============================================================
-      if (!_empresaAtiva(expiraEmpresa)) {
-        debugPrint("⛔ Empresa expirada → TelaBloqueio");
-        _irPara(
-          TelaBloqueio(
-            planoEmpresa: planoEmpresa,
-            empresaExpira: expiraEmpresa,
-          ),
-        );
-        return;
-      }
-
-      // ==============================================================
-      // ✔ LOGIN OK → IR PARA HOME
+      // ✔ TUDO OK → ENTRA NO APP
       // ==============================================================
       _irPara(
         HomeScreen(
           usuarioId: usuarioId,
           empresaId: empresaId,
           plano: planoUser,
-          email: emailUser,
+          email: email,
         ),
       );
-
     } catch (e) {
       debugPrint("❌ Erro login: $e");
       ScaffoldMessenger.of(context).showSnackBar(
@@ -161,22 +163,17 @@ class _LoginScreenState extends State<LoginScreen> {
   // ==========================================================
   String _normalizarData(String valor) {
     if (valor.isEmpty || valor == 'null' || valor == '0000-00-00') return "";
-
-    if (valor.contains(" ")) {
-      valor = valor.split(" ").first;
-    }
-
-    return valor;
+    return valor.contains(" ") ? valor.split(" ").first : valor;
   }
 
   // ==========================================================
   // 🔐 Empresa ativa?
   // ==========================================================
   bool _empresaAtiva(String expira) {
-    if (expira.isEmpty) return false;
-    final exp = DateTime.tryParse(expira);
-    if (exp == null) return false;
-    return exp.isAfter(DateTime.now());
+    if (expira.isEmpty) return true; // datas vazias NÃO bloqueiam
+    final dt = DateTime.tryParse(expira);
+    if (dt == null) return true; // datas inválidas NÃO bloqueiam
+    return dt.isAfter(DateTime.now());
   }
 
   // ==========================================================
@@ -190,7 +187,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   // ==========================================================
-  // 🖥️ INTERFACE
+  // 🖥️ UI
   // ==========================================================
   @override
   Widget build(BuildContext context) {
@@ -216,7 +213,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const SizedBox(height: 40),
 
-              // EMAIL
               TextField(
                 controller: emailCtrl,
                 keyboardType: TextInputType.emailAddress,
@@ -234,7 +230,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const SizedBox(height: 16),
 
-              // SENHA
               TextField(
                 controller: senhaCtrl,
                 obscureText: !mostrarSenha,
@@ -258,7 +253,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const SizedBox(height: 28),
 
-              // BOTÃO LOGIN
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
@@ -280,15 +274,11 @@ class _LoginScreenState extends State<LoginScreen> {
                       color: Colors.black,
                     ),
                   )
-                      : const Text(
-                    'Entrar',
-                    style: TextStyle(fontSize: 16),
-                  ),
+                      : const Text('Entrar', style: TextStyle(fontSize: 16)),
                 ),
               ),
 
               const SizedBox(height: 12),
-
               const Text(
                 '© Tooca Group 2025',
                 style: TextStyle(color: Colors.black54, fontSize: 13),

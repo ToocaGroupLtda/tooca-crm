@@ -1,15 +1,17 @@
 // =============================================================
-// 📋 TOOCA CRM - Pedidos Screen (v6.0 SaaS + EXCEL SHARE SUPREMO)
+// 📋 TOOCA CRM - Pedidos Screen (v7.0 GOLD SEM BLOQUEIO)
 // -------------------------------------------------------------
-// ✔ Verificação LOCAL + SAAS (bloqueio total)
-// ✔ Listagem responsiva para telas pequenas
-// ✔ Botão PDF + Editar + Excluir
-// ✔ Botão Excel -> BAIXA ARQUIVO (bytes) + SALVA + COMPARTILHA
-// ✔ Wrap automático (não estoura layout)
+// ✔ NÃO BLOQUEIA (somente Login e Sincronizar bloqueiam)
+// ✔ Consulta SaaS leve (apenas atualiza dados)
+// ✔ Carrega pedidos online → fallback offline
+// ✔ Suporta edição e exclusão mesmo offline
+// ✔ Exportação Excel com share
+// ✔ Layout responsivo e estável
 // =============================================================
 
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:app_tooca_crm/screens/visualizar_pdf_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -40,12 +42,14 @@ class PedidosScreen extends StatefulWidget {
 class _PedidosScreenState extends State<PedidosScreen> {
   List<dynamic> pedidos = [];
   bool carregando = true;
+  bool offline = false;
 
-  final NumberFormat _moeda = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+  final NumberFormat _moeda =
+  NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
 
   String formatMoeda(num v) => _moeda.format(v);
 
-  double parseValorHibridoDart(dynamic valor) {
+  double parseValorHibrido(dynamic valor) {
     if (valor == null) return 0.0;
     if (valor is num) return valor.toDouble();
     var s = valor.toString().trim();
@@ -66,43 +70,27 @@ class _PedidosScreenState extends State<PedidosScreen> {
   }
 
   // =============================================================
-  // 🔐 Verificação LOCAL + SAAS
+  // 🔄 Carregar pedidos SEM BLOQUEIO
   // =============================================================
   Future<void> _validarECarregar() async {
-    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      carregando = true;
+      offline = false;
+    });
 
-    // Local
-    if (!await SincronizacaoService.empresaAtivaLocal()) {
-      SincronizacaoService.irParaBloqueio(
-        prefs.getString('plano_empresa') ?? 'free',
-        prefs.getString('empresa_expira') ?? '',
-      );
-      return;
-    }
-
-    // SaaS
+    // Atualiza status SaaS, mas nunca bloqueia
     await SincronizacaoService.consultarStatusEmpresa();
 
-    // Local novamente
-    if (!await SincronizacaoService.empresaAtivaLocal()) {
-      SincronizacaoService.irParaBloqueio(
-        prefs.getString('plano_empresa') ?? 'free',
-        prefs.getString('empresa_expira') ?? '',
-      );
-      return;
-    }
-
-    await _carregarReal();
+    await _carregarOnline();
   }
 
   // =============================================================
-  // 🔄 Carrega pedidos online
+  // 🔄 Carregar pedidos online
   // =============================================================
-  Future<void> _carregarReal() async {
-    setState(() => carregando = true);
-
+  Future<void> _carregarOnline() async {
     try {
-      final url = Uri.parse('https://app.toocagroup.com.br/api/listar_pedidos.php');
+      final url =
+      Uri.parse('https://app.toocagroup.com.br/api/listar_pedidos.php');
 
       final response = await http.post(
         url,
@@ -115,18 +103,46 @@ class _PedidosScreenState extends State<PedidosScreen> {
       );
 
       final data = jsonDecode(response.body);
-      pedidos = data['status'] == 'ok' ? data['pedidos'] : [];
+
+      if (data['status'] == 'ok') {
+        pedidos = data['pedidos'];
+        offline = false;
+
+        // Atualiza cache
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(
+          'pedidos_offline_${widget.empresaId}',
+          jsonEncode({'pedidos': pedidos}),
+        );
+      } else {
+        await _carregarOffline();
+      }
     } catch (_) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('📴 Sem conexão com o servidor.')),
-      );
+      await _carregarOffline();
     }
 
     if (mounted) setState(() => carregando = false);
   }
 
   // =============================================================
-  // 🔄 Exportar Excel (ARQUIVO DIRETO → Share)
+  // 💾 Carregar pedidos do cache offline
+  // =============================================================
+  Future<void> _carregarOffline() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('pedidos_offline_${widget.empresaId}');
+
+    if (raw != null) {
+      final json = jsonDecode(raw);
+      pedidos = json['pedidos'] ?? [];
+      offline = true;
+    } else {
+      pedidos = [];
+      offline = true;
+    }
+  }
+
+  // =============================================================
+  // 🔄 Exportar Excel direto (save + share)
   // =============================================================
   Future<void> exportarExcelDireto(Map<String, dynamic> pedido) async {
     final pedidoId = pedido['id'].toString();
@@ -144,12 +160,10 @@ class _PedidosScreenState extends State<PedidosScreen> {
         return;
       }
 
-      // Salvar arquivo temporário
       final dir = await getTemporaryDirectory();
       final file = File("${dir.path}/Pedido_$pedidoId.xlsx");
       await file.writeAsBytes(response.bodyBytes);
 
-      // Compartilhar no WhatsApp / Apps
       await Share.shareXFiles(
         [XFile(file.path)],
         text: "Pedido #$pedidoId - Excel gerado pelo Tooca CRM",
@@ -162,28 +176,11 @@ class _PedidosScreenState extends State<PedidosScreen> {
   }
 
   // =============================================================
-  // 🗑️ Excluir Pedido
+  // 🗑️ Excluir pedido (não bloqueia)
   // =============================================================
   Future<void> excluirPedido(int pedidoId) async {
-    final prefs = await SharedPreferences.getInstance();
-
-    if (!await SincronizacaoService.empresaAtivaLocal()) {
-      SincronizacaoService.irParaBloqueio(
-        prefs.getString('plano_empresa') ?? 'free',
-        prefs.getString('empresa_expira') ?? '',
-      );
-      return;
-    }
-
+    // Atualiza status SaaS
     await SincronizacaoService.consultarStatusEmpresa();
-
-    if (!await SincronizacaoService.empresaAtivaLocal()) {
-      SincronizacaoService.irParaBloqueio(
-        prefs.getString('plano_empresa') ?? 'free',
-        prefs.getString('empresa_expira') ?? '',
-      );
-      return;
-    }
 
     final confirmar = await showDialog<bool>(
       context: context,
@@ -204,7 +201,8 @@ class _PedidosScreenState extends State<PedidosScreen> {
     if (confirmar != true) return;
 
     try {
-      final url = Uri.parse('https://app.toocagroup.com.br/api/excluir_pedido.php');
+      final url =
+      Uri.parse('https://app.toocagroup.com.br/api/excluir_pedido.php');
 
       final response = await http.post(
         url,
@@ -237,28 +235,10 @@ class _PedidosScreenState extends State<PedidosScreen> {
   }
 
   // =============================================================
-  // ✏️ Abrir Edição
+  // ✏️ Abrir edição (não bloqueia)
   // =============================================================
   void abrirEdicao(Map<String, dynamic> pedidoJson) async {
-    final prefs = await SharedPreferences.getInstance();
-
-    if (!await SincronizacaoService.empresaAtivaLocal()) {
-      SincronizacaoService.irParaBloqueio(
-        prefs.getString('plano_empresa') ?? 'free',
-        prefs.getString('empresa_expira') ?? '',
-      );
-      return;
-    }
-
     await SincronizacaoService.consultarStatusEmpresa();
-
-    if (!await SincronizacaoService.empresaAtivaLocal()) {
-      SincronizacaoService.irParaBloqueio(
-        prefs.getString('plano_empresa') ?? 'free',
-        prefs.getString('empresa_expira') ?? '',
-      );
-      return;
-    }
 
     Navigator.push(
       context,
@@ -284,7 +264,8 @@ class _PedidosScreenState extends State<PedidosScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       appBar: AppBar(
-        title: const Text('Pedidos', style: TextStyle(fontWeight: FontWeight.bold)),
+        title:
+        const Text('Pedidos', style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: const Color(0xFFFFCC00),
         foregroundColor: Colors.black,
         actions: [
@@ -294,7 +275,6 @@ class _PedidosScreenState extends State<PedidosScreen> {
           ),
         ],
       ),
-
       body: carregando
           ? const Center(child: CircularProgressIndicator(color: Colors.amber))
           : pedidos.isEmpty
@@ -304,7 +284,7 @@ class _PedidosScreenState extends State<PedidosScreen> {
         itemCount: pedidos.length,
         itemBuilder: (context, index) {
           final p = pedidos[index];
-          final total = parseValorHibridoDart(p['total'] ?? 0);
+          final total = parseValorHibrido(p['total'] ?? 0);
 
           return Card(
             margin: const EdgeInsets.only(bottom: 16),
@@ -329,77 +309,78 @@ class _PedidosScreenState extends State<PedidosScreen> {
                   Text("Total: ${formatMoeda(total)}"),
                   const SizedBox(height: 12),
 
-                  // 🔥 BOTÕES RESPONSIVOS
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Flexible(
-                        child: ElevatedButton.icon(
-                          icon: const Icon(Icons.picture_as_pdf, color: Colors.black),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFFFFCC00),
-                            minimumSize: const Size(0, 40),
-                          ),
-                          label: const Text('PDF', style: TextStyle(color: Colors.black)),
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => VisualizarPdfScreen(
-                                  pedidoId: int.tryParse(p['id'].toString()) ?? 0,
-                                  empresaId: widget.empresaId,
-                                  usuarioId: widget.usuarioId,
-                                  plano: widget.plano,
+                      Expanded(
+                        child: Container(
+                          height: 38,
+                          margin: const EdgeInsets.only(right: 6),
+                          child: ElevatedButton(
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => VisualizarPdfScreen(
+                                    pedidoId: int.parse(p['id'].toString()),
+                                    usuarioId: widget.usuarioId,
+                                    empresaId: widget.empresaId,
+                                    plano: widget.plano,
+                                  ),
                                 ),
-                              ),
-                            );
-                          },
+                              );
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.yellow[700],
+                            ),
+                            child: const Text("PDF", style: TextStyle(fontSize: 11)),
+                          ),
                         ),
                       ),
 
-                      const SizedBox(width: 8),
-
-                      Flexible(
-                        child: ElevatedButton.icon(
-                          icon: const Icon(Icons.edit, color: Colors.black),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.amber.shade700,
-                            minimumSize: const Size(0, 40),
+                      Expanded(
+                        child: Container(
+                          height: 38,
+                          margin: const EdgeInsets.only(right: 6),
+                          child: ElevatedButton(
+                            onPressed: () => abrirEdicao(p),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.orange,
+                            ),
+                            child: const Text("EDITAR", style: TextStyle(fontSize: 11)),
                           ),
-                          label: const Text('Editar', style: TextStyle(color: Colors.black)),
-                          onPressed: () => abrirEdicao(p),
                         ),
                       ),
 
-                      const SizedBox(width: 8),
-
-                      Flexible(
-                        child: ElevatedButton.icon(
-                          icon: const Icon(Icons.delete, color: Colors.white),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.red,
-                            minimumSize: const Size(0, 40),
+                      Expanded(
+                        child: Container(
+                          height: 38,
+                          margin: const EdgeInsets.only(right: 6),
+                          child: ElevatedButton(
+                            onPressed: () => excluirPedido(int.parse(p['id'].toString())),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.red,
+                            ),
+                            child: const Text("EXCLUIR", style: TextStyle(fontSize: 11)),
                           ),
-                          label: const Text('Excluir', style: TextStyle(color: Colors.white)),
-                          onPressed: () => excluirPedido(p['id']),
                         ),
                       ),
 
-                      const SizedBox(width: 8),
-
-                      Flexible(
-                        child: ElevatedButton.icon(
-                          icon: const Icon(Icons.download, color: Colors.black),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.greenAccent,
-                            minimumSize: const Size(0, 40),
+                      Expanded(
+                        child: Container(
+                          height: 38,
+                          child: ElevatedButton(
+                            onPressed: () => exportarExcelDireto(p),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                            ),
+                            child: const Text("EXCEL", style: TextStyle(fontSize: 11)),
                           ),
-                          label: const Text('Excel', style: TextStyle(color: Colors.black)),
-                          onPressed: () => exportarExcelDireto(p),
                         ),
                       ),
                     ],
                   )
+
+
 
                 ],
               ),

@@ -1,14 +1,14 @@
 // =============================================================
-// 🔄 TOOCA CRM - Sincronização Offline/Online (v7.5 EVA SUPREMO)
+// 🔄 TOOCA CRM - Sincronização (v8.2 EVA GOLD SUPREMO)
 // -------------------------------------------------------------
-// ✔ Modo Offline Completo (clientes, produtos, tabelas, condições)
-// ✔ Cache por empresa (clientes_offline_ID, etc.)
-// ✔ Sincronização Silenciosa Automática
-// ✔ Envio de pedidos pendentes com merge local
-// ✔ Bloqueio SaaS Centralizado (globalNavigatorKey)
-// ✔ Carregamento Offline separado para cada entidade
-// ✔ 100% compatível com NovoPedidoScreen / PedidosScreen / Splash
-// ✔ Código limpo, organizado e sem duplicações
+// ✔ Somente LOGIN e SINCRONIZAR podem bloquear
+// ✔ Home, Pedidos, Clientes, Produtos → NUNCA bloqueiam
+// ✔ sincronizarSilenciosamente → nunca bloqueia
+// ✔ consultarStatusEmpresa → nunca bloqueia
+// ✔ empresaAtivaLocal → não bloqueia datas vazias
+// ✔ enviarPedidosPendentes incluído
+// ✔ carregarCondicoesOffline + salvarCondicoesOffline
+// ✔ leitura REAL das listas (JSON do servidor)
 // =============================================================
 
 import 'dart:convert';
@@ -22,79 +22,68 @@ import 'TelaBloqueio.dart';
 class SincronizacaoService {
 
   // ============================================================
-  // 🛡️ VERIFICAÇÃO LOCAL: Empresa ativa?
+  // 🛡 EMPRESA ATIVA (LOCAL) — NÃO BLOQUEIA DATAS VAZIAS
   // ============================================================
   static Future<bool> empresaAtivaLocal() async {
     final prefs = await SharedPreferences.getInstance();
 
-    final plano = prefs.getString('plano_empresa') ?? '';
-    final expira = prefs.getString('empresa_expira') ?? '';
     final status = prefs.getString('empresa_status') ?? 'ativo';
+    final expira = prefs.getString('empresa_expira') ?? '';
 
     if (status != 'ativo') return false;
-    if (plano.isEmpty || expira.isEmpty) return false;
+    if (expira.isEmpty) return true;
 
     final dt = DateTime.tryParse(expira);
-    if (dt == null) return false;
+    if (dt == null) return true;
 
     return dt.isAfter(DateTime.now());
   }
 
   // ============================================================
-// 🛡️ JSON seguro — evita FormatException
-// ============================================================
+  // 🛡 JSON SEGURO
+  // ============================================================
   static dynamic jsonSeguro(String raw) {
     if (raw.isEmpty) return {};
-    try {
-      return jsonDecode(raw);
-    } catch (e) {
-      debugPrint("❌ JSON inválido: $e\nRAW: $raw");
-      return {};
-    }
+    try { return jsonDecode(raw); }
+    catch (_) { return {}; }
   }
 
-
   // ============================================================
-// 🌐 CONSULTA STATUS REAL (SaaS) — VERSÃO BLINDADA
-// ============================================================
-  static Future<void> consultarStatusEmpresa() async {
+  // 🌐 CONSULTA STATUS REAL — NUNCA BLOQUEIA
+  // ============================================================
+  static Future<bool> consultarStatusEmpresa() async {
     final prefs = await SharedPreferences.getInstance();
     final empresaId = prefs.getInt('empresa_id') ?? 0;
 
-    if (empresaId == 0) return;
+    if (empresaId == 0) return true;
 
     try {
-      final res = await http.get(Uri.parse(
-          "https://app.toocagroup.com.br/api/status_empresa.php?empresa_id=$empresaId"));
+      final r = await http.get(Uri.parse(
+          "https://app.toocagroup.com.br/api/status_empresa.php?empresa_id=$empresaId"
+      ));
 
-      final data = jsonSeguro(res.body);
+      final data = jsonSeguro(r.body);
 
-      if (data.isEmpty || data['status'] != 'ok') {
-        debugPrint("⚠️ Status SaaS vazio ou inválido");
-        return;
-      }
+      if (data.isEmpty || data['status'] != 'ok') return true;
 
       await prefs.setString('plano_empresa', data['plano'] ?? 'free');
       await prefs.setString('empresa_expira', data['expira'] ?? '');
-      await prefs.setString('empresa_status', data['empresa_status'] ?? 'inativo');
+      await prefs.setString('empresa_status', data['empresa_status'] ?? 'ativo');
 
       final exp = DateTime.tryParse(data['expira'] ?? '');
-      final agora = DateTime.now();
+      if (exp == null) return true;
 
-      if (data['empresa_status'] != 'ativo' ||
-          (exp != null && exp.isBefore(agora))) {
-        irParaBloqueio(data['plano'] ?? 'free', data['expira'] ?? '');
-      }
+      return data['empresa_status'] == 'ativo' && exp.isAfter(DateTime.now());
 
-    } catch (e) {
-      debugPrint("❌ Erro ao consultar status SaaS: $e");
+    } catch (_) {
+      return true;
     }
   }
 
   // ============================================================
-  // 🚫 BLOQUEIO CENTRALIZADO
+  // 🚫 BLOQUEIO — usado SOMENTE se você chamar
   // ============================================================
-  static void irParaBloqueio(String plano, String expira) {
+  static void irParaBloqueio({required String plano, required String expira}) {
     globalNavigatorKey.currentState?.pushAndRemoveUntil(
       MaterialPageRoute(
         builder: (_) => TelaBloqueio(
@@ -107,113 +96,78 @@ class SincronizacaoService {
   }
 
   // ============================================================
-  // 💾 CARREGAMENTO OFFLINE → CLIENTES
+  // 🔁 SINCRONIZAÇÃO MANUAL (ÚNICA QUE BLOQUEIA)
   // ============================================================
-  static Future<List<Map<String, dynamic>>> carregarClientesOffline(int empresaId) async {
+  static Future<void> sincronizarTudo(BuildContext context, int empresaId) async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('clientes_offline_$empresaId');
-
-    if (raw == null) return [];
-    final json = jsonDecode(raw);
-
-    if (json is Map && json.containsKey('clientes')) {
-      return List<Map<String, dynamic>>.from(json['clientes']);
-    }
-    if (json is List) {
-      return List<Map<String, dynamic>>.from(json);
-    }
-
-    return [];
-  }
-
-  // ============================================================
-  // 💾 CARREGAMENTO OFFLINE → PRODUTOS
-  // ============================================================
-  static Future<List<Map<String, dynamic>>> carregarProdutosOffline(int empresaId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('produtos_offline_$empresaId');
-
-    if (raw == null) return [];
-    final json = jsonDecode(raw);
-
-    if (json is Map && json.containsKey('produtos')) {
-      return List<Map<String, dynamic>>.from(json['produtos']);
-    }
-    if (json is List) {
-      return List<Map<String, dynamic>>.from(json);
-    }
-
-    return [];
-  }
-
-  // ============================================================
-  // 💾 CARREGAMENTO OFFLINE → TABELAS DE PREÇO
-  // ============================================================
-  static Future<List<Map<String, dynamic>>> carregarTabelasOffline(int empresaId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('tabelas_offline_$empresaId');
-
-    if (raw == null) return [];
-    final json = jsonDecode(raw);
-
-    if (json is Map && json.containsKey('tabelas')) {
-      return List<Map<String, dynamic>>.from(json['tabelas']);
-    }
-    if (json is List) {
-      return List<Map<String, dynamic>>.from(json);
-    }
-
-    return [];
-  }
-
-  // ============================================================
-  // 💾 CARREGAMENTO OFFLINE → CONDIÇÕES DE PAGAMENTO
-  // ============================================================
-  static Future<List<Map<String, dynamic>>> carregarCondicoesOffline(int empresaId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('condicoes_offline_$empresaId');
-
-    if (raw == null) return [];
-    final json = jsonDecode(raw);
-
-    if (json is Map && json.containsKey('condicoes')) {
-      return List<Map<String, dynamic>>.from(json['condicoes']);
-    }
-    if (json is List) {
-      return List<Map<String, dynamic>>.from(json);
-    }
-
-    return [];
-  }
-
-  // ============================================================
-  // 🔁 SINCRONIZAÇÃO MANUAL COMPLETA
-  // ============================================================
-  static Future<void> sincronizarTudo(
-      BuildContext context, int empresaId) async {
 
     if (!await empresaAtivaLocal()) {
-      final prefs = await SharedPreferences.getInstance();
-      irParaBloqueio(
-        prefs.getString('plano_empresa') ?? 'free',
-        prefs.getString('empresa_expira') ?? '',
+      return irParaBloqueio(
+        plano: prefs.getString('plano_empresa') ?? 'free',
+        expira: prefs.getString('empresa_expira') ?? '',
       );
-      return;
     }
+
+    final ativa = await consultarStatusEmpresa();
+    if (!ativa) {
+      return irParaBloqueio(
+        plano: prefs.getString('plano_empresa') ?? 'free',
+        expira: prefs.getString('empresa_expira') ?? '',
+      );
+    }
+
+    final usuario = prefs.getInt('usuario_id') ?? 0;
+    final planoUser = prefs.getString('plano_usuario') ?? 'free';
+
+    final endpoints = {
+      'clientes_offline_$empresaId':
+      'https://app.toocagroup.com.br/api/listar_clientes.php?empresa_id=$empresaId&usuario_id=$usuario&plano=$planoUser',
+
+      'produtos_offline_$empresaId':
+      'https://app.toocagroup.com.br/api/listar_produtos.php?empresa_id=$empresaId&usuario_id=$usuario&plano=$planoUser',
+
+      'tabelas_offline_$empresaId':
+      'https://app.toocagroup.com.br/api/listar_tabelas.php?empresa_id=$empresaId&usuario_id=$usuario&plano=$planoUser',
+
+      'condicoes_offline_$empresaId':
+      'https://app.toocagroup.com.br/api/listar_condicoes.php?empresa_id=$empresaId&usuario_id=$usuario&plano=$planoUser',
+    };
+
+    int ok = 0, falha = 0;
+
+    for (final e in endpoints.entries) {
+      try {
+        final r = await http.get(Uri.parse(e.value));
+        if (r.statusCode == 200) {
+          await prefs.setString(e.key, r.body);
+          ok++;
+        } else {
+          falha++;
+        }
+      } catch (_) {
+        falha++;
+      }
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text("🔄 OK: $ok • Falhas: $falha"),
+        backgroundColor: falha == 0 ? Colors.green : Colors.orange,
+      ),
+    );
+  }
+
+  // ============================================================
+  // 🔇 SINCRONIZAÇÃO SILENCIOSA — NUNCA BLOQUEIA
+  // ============================================================
+  static Future<void> sincronizarSilenciosamente(
+      int empresaId,
+      int usuarioId,
+      ) async {
 
     await consultarStatusEmpresa();
 
-    if (!await empresaAtivaLocal()) {
-      final prefs = await SharedPreferences.getInstance();
-      irParaBloqueio(
-        prefs.getString('plano_empresa') ?? 'free',
-        prefs.getString('empresa_expira') ?? '',
-      );
-      return;
-    }
-
     final prefs = await SharedPreferences.getInstance();
-    final usuarioId = prefs.getInt('usuario_id') ?? 0;
     final planoUser = prefs.getString('plano_usuario') ?? 'free';
 
     final endpoints = {
@@ -230,112 +184,115 @@ class SincronizacaoService {
       'https://app.toocagroup.com.br/api/listar_condicoes.php?empresa_id=$empresaId&usuario_id=$usuarioId&plano=$planoUser',
     };
 
-    int ok = 0, falha = 0;
-
-    try {
-      for (final entry in endpoints.entries) {
-        final res = await http.get(Uri.parse(entry.value));
-        if (res.statusCode == 200) {
-          await prefs.setString(entry.key, res.body);
-          ok++;
-        } else {
-          falha++;
+    for (final e in endpoints.entries) {
+      try {
+        final r = await http.get(Uri.parse(e.value));
+        if (r.statusCode == 200) {
+          await prefs.setString(e.key, r.body);
         }
-      }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("🔄 Sincronização concluída • OK: $ok • Falhas: $falha"),
-          backgroundColor: falha == 0 ? Colors.green : Colors.orange,
-        ),
-      );
-    } catch (e) {
-      debugPrint("❌ Erro sincronização manual: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("❌ Erro inesperado."),
-          backgroundColor: Colors.red,
-        ),
-      );
+      } catch (_) {}
     }
   }
 
+
   // ============================================================
-  // 📡 ENVIO DE PEDIDOS PENDENTES
+  // 💾 CARREGADORES OFFLINE
+  // ============================================================
+
+  static Future<List<Map<String, dynamic>>> carregarClientesOffline(int empresaId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('clientes_offline_$empresaId') ?? '';
+
+    if (raw.isEmpty) return [];
+
+    final data = jsonSeguro(raw);
+    return List<Map<String, dynamic>>.from(data['clientes'] ?? data);
+  }
+
+  static Future<List<Map<String, dynamic>>> carregarProdutosOffline(int empresaId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('produtos_offline_$empresaId') ?? '';
+
+    if (raw.isEmpty) return [];
+
+    final data = jsonSeguro(raw);
+    return List<Map<String, dynamic>>.from(data['produtos'] ?? data);
+  }
+
+  static Future<List<Map<String, dynamic>>> carregarTabelasOffline(int empresaId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('tabelas_offline_$empresaId') ?? '';
+
+    if (raw.isEmpty) return [];
+
+    final data = jsonSeguro(raw);
+    return List<Map<String, dynamic>>.from(data['tabelas'] ?? data);
+  }
+
+  // ============================================================
+  // 💾 CONDIÇÕES — FALTAVA AQUI! (CORRIGIDO)
+  // ============================================================
+
+  static Future<List<Map<String, dynamic>>> carregarCondicoesOffline(int empresaId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('condicoes_offline_$empresaId') ?? '';
+
+    if (raw.isEmpty) return [];
+
+    final data = jsonSeguro(raw);
+
+    return List<Map<String, dynamic>>.from(data['condicoes'] ?? data);
+  }
+
+  static Future<void> salvarCondicoesOffline(int empresaId, List condicoes) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('condicoes_offline_$empresaId', jsonEncode({'condicoes': condicoes}));
+  }
+
+
+  // ============================================================
+  // 📤 ENVIAR PEDIDOS PENDENTES — NUNCA BLOQUEIA
   // ============================================================
   static Future<void> enviarPedidosPendentes(
-      BuildContext context, int usuarioId, int empresaId) async {
-
-    if (!await empresaAtivaLocal()) {
-      final prefs = await SharedPreferences.getInstance();
-      irParaBloqueio(
-        prefs.getString('plano_empresa') ?? 'free',
-        prefs.getString('empresa_expira') ?? '',
-      );
-      return;
-    }
-
-    await consultarStatusEmpresa();
-
-    if (!await empresaAtivaLocal()) {
-      final prefs = await SharedPreferences.getInstance();
-      irParaBloqueio(
-        prefs.getString('plano_empresa') ?? 'free',
-        prefs.getString('empresa_expira') ?? '',
-      );
-      return;
-    }
+      BuildContext context,
+      int usuarioId,
+      int empresaId,
+      ) async {
 
     final prefs = await SharedPreferences.getInstance();
     final chave = 'pedidos_pendentes_$empresaId';
-    final fila = prefs.getStringList(chave) ?? [];
+
+    final fila = prefs.getStringList(chave) ?? <String>[];
 
     if (fila.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('📭 Nenhum pedido pendente.')),
+        const SnackBar(content: Text('Nenhum pedido offline para enviar.')),
       );
       return;
     }
 
-    int enviados = 0, erros = 0;
-    final sucesso = <String>[];
+    int enviados = 0;
+    int erros = 0;
 
-    for (final item in fila) {
+    for (String raw in fila.toList()) {
       try {
-        final reg = jsonDecode(item);
-        final dados = Map<String, dynamic>.from(reg['dados'] ?? reg);
-
-        final itens = (dados['itens'] as List? ?? []).map((it) {
-          return {
-            'produto_id': it['produto_id'] ?? '',
-            'quantidade': it['qtd'] ?? it['quantidade'] ?? 0,
-            'preco_unit': it['preco'] ?? 0,
-            'desconto': it['desconto'] ?? 0,
-            'nome': it['nome'] ?? '',
-            'codigo': it['codigo'] ?? '',
-          };
-        }).toList();
+        final dados = jsonDecode(raw);
 
         final resp = await http.post(
-          Uri.parse('https://app.toocagroup.com.br/api/criar_pedido.php'),
-          body: {
-            'usuario_id': '${dados['usuario_id'] ?? usuarioId}',
-            'empresa_id': '$empresaId',
-            'cliente_id': '${dados['cliente_id'] ?? ''}',
-            'tabela_id': '${dados['tabela_id'] ?? ''}',
-            'cond_pagto_id': '${dados['cond_pagto_id'] ?? ''}',
-            'observacao': '${dados['observacao'] ?? ''}',
-            'desconto_geral': '${dados['desconto_geral'] ?? 0}',
-            'total': '${dados['total'] ?? 0}',
-            'itens': jsonEncode(itens),
-          },
+          Uri.parse("https://app.toocagroup.com.br/api/criar_pedido.php"),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            "usuario_id": usuarioId,
+            "empresa_id": empresaId,
+            "pedido": dados,
+          }),
         );
 
-        final data = jsonDecode(resp.body);
+        final json = jsonDecode(resp.body);
 
-        if (data['status'] == 'ok') {
+        if (json["status"] == "ok") {
+          fila.remove(raw);
           enviados++;
-          sucesso.add(item);
         } else {
           erros++;
         }
@@ -344,51 +301,13 @@ class SincronizacaoService {
       }
     }
 
-    final restante = List<String>.from(fila)..removeWhere(sucesso.contains);
-    await prefs.setStringList(chave, restante);
+    await prefs.setStringList(chave, fila);
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text("📡 Enviados: $enviados • Falhas: $erros"),
+        content: Text("📤 Enviados: $enviados • ❌ Erros: $erros"),
+        backgroundColor: enviados > 0 && erros == 0 ? Colors.green : Colors.orange,
       ),
     );
-  }
-
-  // ============================================================
-  // 🔇 SINCRONIZAÇÃO SILENCIOSA
-  // ============================================================
-  static Future<void> sincronizarSilenciosamente(
-      int empresaId, int usuarioId) async {
-    if (!await empresaAtivaLocal()) return;
-
-    await consultarStatusEmpresa();
-
-    if (!await empresaAtivaLocal()) return;
-
-    final prefs = await SharedPreferences.getInstance();
-    final planoUser = prefs.getString('plano_usuario') ?? 'free';
-
-    final endpoints = {
-      'clientes_offline_$empresaId':
-      'https://app.toocagroup.com.br/api/listar_clientes.php?empresa_id=$empresaId&usuario_id=$usuarioId&plano=$planoUser',
-
-      'produtos_offline_$empresaId':
-      'https://app.toocagroup.com.br/api/listar_produtos.php?empresa_id=$empresaId&usuario_id=$usuarioId&plano=$planoUser',
-
-      'tabelas_offline_$empresaId':
-      'https://app.toocagroup.com.br/api/listar_tabelas.php?empresa_id=$empresaId&usuario_id=$usuarioId&plano=$planoUser',
-
-      'condicoes_offline_$empresaId':
-      'https://app.toocagroup.com.br/api/listar_condicoes.php?empresa_id=$empresaId&usuario_id=$usuarioId&plano=$planoUser',
-    };
-
-    try {
-      for (final entry in endpoints.entries) {
-        final res = await http.get(Uri.parse(entry.value));
-        if (res.statusCode == 200) {
-          await prefs.setString(entry.key, res.body);
-        }
-      }
-    } catch (_) {}
   }
 }
