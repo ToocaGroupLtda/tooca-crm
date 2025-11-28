@@ -133,8 +133,35 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
       if (mounted) setState(() => _isOnline = online);
     });
 
+
     carregarDadosOffline();
   }
+
+  Future<void> _limparRascunhoSeInvalido() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(chaveRascunho);
+    if (raw == null) return;
+
+    try {
+      final dados = jsonDecode(raw);
+
+      // Se veio rascunho com pedido_id → rascunho antigo → limpa
+      if (dados['pedido_id'] != null) {
+        await prefs.remove(chaveRascunho);
+        return;
+      }
+
+      // Se existirem itens sem produto_id → lixo → limpa
+      if (dados['itens'] is List &&
+          dados['itens'].any((i) => i['produto_id'] == null)) {
+        await prefs.remove(chaveRascunho);
+        return;
+      }
+    } catch (_) {
+      await prefs.remove(chaveRascunho);
+    }
+  }
+
 
   @override
   void dispose() {
@@ -147,6 +174,8 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
 
   Future<void> carregarDadosOffline() async {
     setState(() => carregando = true);
+// 🔥 LIMPA RASCUNHO ANTIGO QUE CAUSA DUPLICAÇÃO DE ITENS
+    await _limparRascunhoSeInvalido();
 
     clientes = await SincronizacaoService.carregarClientesOffline(widget.empresaId);
 // 🔥 PRÉ-INDEXAÇÃO — acelera a busca em até 95%
@@ -226,19 +255,27 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
     }
 
 
+    // --- Carregar pedido (existente, rascunho ou novo) ---
     if (widget.pedidoId != null) {
+      // 🔥 SE FOR PEDIDO EXISTENTE → NÃO CARREGA RASCUNHO
       await carregarPedidoExistente(widget.pedidoId!);
-    } else if (widget.pedidoRascunho != null) {
+      setState(() => carregando = false);
+      return;
+    }
+
+    if (widget.pedidoRascunho != null) {
       carregarDoRascunho(widget.pedidoRascunho!);
     } else {
       await carregarRascunho();
     }
 
+
     // 🔥 Após carregar tudo: força preencher o campo de busca do cliente
     if (clienteId != null) {
       final cli = clientes.firstWhere(
             (c) => c['id'].toString() == clienteId.toString(),
-        orElse: () => {},
+        orElse: () => <String, dynamic>{},
+
       );
 
       if (cli.isNotEmpty) {
@@ -400,7 +437,11 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
           final produtoId = item['produto_id'];
           final produtoLocal = produtos.firstWhere(
                 (p) => int.tryParse('${p['id']}') == produtoId,
-            orElse: () => {'nome': '', 'codigo': ''},
+            orElse: () => <String, dynamic>{
+              'nome': '',
+              'codigo': '',
+            },
+
           );
 
           // Nome e código priorizam o salvo no pedido
@@ -524,7 +565,8 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
 
     final clienteEncontrado = clientes.firstWhere(
           (c) => c['id'].toString() == clienteId?.toString(),
-      orElse: () => {'nome': ''},
+      orElse: () => <String, dynamic>{'nome': ''},
+
     );
 
 // LIMPA qualquer endereço/fantasia/detalhes acoplados
@@ -558,7 +600,8 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
 
     final clienteNomeSelecionado = (clientes.firstWhere(
           (c) => c['id'].toString() == (clienteId?.toString() ?? ''),
-      orElse: () => {'nome': 'Cliente Offline'},
+      orElse: () => <String, dynamic>{'nome': 'Cliente Offline'},
+
     )['nome'] ?? 'Cliente Offline');
 
     final tabelaNomeSelecionada = (tabelas.firstWhere(
@@ -840,7 +883,8 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
 
     final clienteNomeSelecionado = (clientes.firstWhere(
           (c) => c['id'].toString() == (clienteId?.toString() ?? ''),
-      orElse: () => {'nome': 'Cliente Offline'},
+      orElse: () => <String, dynamic>{'nome': 'Cliente Offline'},
+
     )['nome'] ?? 'Cliente Offline');
 
     final tabelaNomeSelecionada = (tabelas.firstWhere(
