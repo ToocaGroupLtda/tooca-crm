@@ -199,6 +199,7 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
         "cliente_id": widget.cliente?['id'],
         "empresa_id": widget.empresaId,
         "usuario_id": widget.usuarioId,
+        "plano": widget.plano,              //  👈🔥  aqui está a correção!
         "nome": nome,
         "fantasia": fantasiaCtrl.text.trim(),
         "razao_social": razaoCtrl.text.trim(),
@@ -208,10 +209,10 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
         "endereco": enderecoCtrl.text.trim(),
         "bairro": bairroCtrl.text.trim(),
         "cidade": cidadeCtrl.text.trim(),
-        "uf": estadoCtrl.text.trim(),      // ← CORRETO
+        "uf": estadoCtrl.text.trim(),
         "cep": cepCtrl.text.trim(),
-
       });
+
 
       final resp = await http.post(
         url,
@@ -288,9 +289,9 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
     await prefs.setString(chave, jsonEncode(jsonArmazenado));
   }
 
-  // ===========================================================
-  // 🗑️ EXCLUIR CLIENTE
-  // ===========================================================
+// ===========================================================
+// 🗑️ EXCLUIR CLIENTE (CORRIGIDO v7.7 EVA SUPREMO)
+// ===========================================================
   Future<void> excluirCliente() async {
     if (widget.cliente == null) return;
 
@@ -316,18 +317,28 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
     if (confirma != true) return;
 
     try {
+      // 🔥 Correção oficial do erro "String is not a subtype of int"
+      final int idCorrigido =
+          int.tryParse(widget.cliente!['id'].toString()) ?? 0;
+
+      final int empresaCorrigido =
+          int.tryParse(widget.empresaId.toString()) ?? 0;
+
+      print("ID corrigido = $idCorrigido");
+      print("Empresa corrigido = $empresaCorrigido");
+
       final resp = await http.post(
         Uri.parse("https://app.toocagroup.com.br/api/excluir_cliente.php"),
         body: {
-          "id": widget.cliente!['id'].toString(),
-          "empresa_id": widget.empresaId.toString(),
+          "id": idCorrigido.toString(),
+          "empresa_id": empresaCorrigido.toString(),
         },
       );
 
       final data = jsonDecode(resp.body);
 
       if (data['status'] == 'ok') {
-        await _removerOffline(widget.cliente!['id']);
+        await _removerOffline(idCorrigido);
 
         Navigator.pop(context, true);
       } else {
@@ -338,6 +349,7 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
           .showSnackBar(SnackBar(content: Text("Erro: $e")));
     }
   }
+
 
   // ===========================================================
   // 🗑️ REMOVER DO CACHE OFFLINE

@@ -115,6 +115,8 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
         obsCtrl.text.isNotEmpty;
   }
 
+  String? _tabelaSelecionadaNome; // 💛 nome da tabela (LOTUS, ST, etc.)
+
   @override
   void initState() {
     super.initState();
@@ -754,7 +756,7 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
 
 // Se for novo, sugiro pré-preencher o campo de desconto com o descontoGeral atual
     final qtdCtrl  = TextEditingController(text: isEdit ? '${item!['qtd']}' : '1');
-    final descCtrl = TextEditingController(text: isEdit ? '${item!['desconto']}' : (descontoGeral > 0 ? '$descontoGeral' : '0'));
+    final descCtrl = TextEditingController(text: isEdit ? '${item!['desconto']}' : (descontoGeral > 0 ? '$descontoGeral' : ''));
 
 // Preço mostrado é SEMPRE derivado de (preco_base, desconto digitado)
     final double precoInicial = precoBase * (1 - ((double.tryParse(descCtrl.text.replaceAll(',', '.')) ?? 0.0) / 100));

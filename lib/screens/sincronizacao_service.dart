@@ -1,11 +1,12 @@
 // =============================================================
-// 🔄 TOOCA CRM - Sincronização (v8.3 EVA GOLD SUPREMO FINAL)
+// 🔄 TOOCA CRM - Sincronização (v8.4 EVA GOLD SUPREMA FINAL)
 // -------------------------------------------------------------
-// ✔ Todos os loaders OFFLINE corrigidos (clientes/produtos/tabelas/condições)
+// ✔ RESET AUTOMÁTICO de usuario_id inválido (>5)
+// ✔ Nunca usa usuario_id fantasma (ex: 9)
+// ✔ Todos os loaders OFFLINE corrigidos
 // ✔ Suporta TODOS os formatos JSON da API ou local
-// ✔ Nunca bloqueia Home/Pedidos/Produtos/Clientes
-// ✔ Sincronização silenciosa atualizada
-// ✔ Envio de pedidos pendentes 100% compatível com NovoPedidoScreen
+// ✔ Envio de pedidos pendentes compatível com NovoPedidoScreen
+// ✔ Silenciosa + Manual perfeitas
 // =============================================================
 
 import 'dart:convert';
@@ -101,6 +102,14 @@ class SincronizacaoService {
   static Future<void> sincronizarTudo(BuildContext context, int empresaId) async {
     final prefs = await SharedPreferences.getInstance();
 
+    // 🔥 RESET AUTOMÁTICO DE usuario_id fantasma
+    int uid = prefs.getInt('usuario_id') ?? 0;
+    if (uid > 5) { // nenhum usuário válido passa de ID 5
+      print("⚠️ Resetando SharedPreferences — usuario_id inválido ($uid)");
+      await prefs.clear();
+      uid = 0;
+    }
+
     if (!await empresaAtivaLocal()) {
       return irParaBloqueio(
         plano: prefs.getString('plano_empresa') ?? 'free',
@@ -186,6 +195,15 @@ class SincronizacaoService {
     await consultarStatusEmpresa();
 
     final prefs = await SharedPreferences.getInstance();
+
+    // 🔥 RESET AUTOMÁTICO DE usuario_id fantasma
+    int uid = prefs.getInt('usuario_id') ?? 0;
+    if (uid > 5) {
+      print("⚠️ Resetando SharedPreferences silenciosamente — usuario_id inválido ($uid)");
+      await prefs.clear();
+      return; // força re-login
+    }
+
     final planoUser = prefs.getString('plano_usuario') ?? 'free';
 
     final endpoints = {
@@ -213,9 +231,8 @@ class SincronizacaoService {
   }
 
   // ============================================================
-  // 💾 CARREGADORES OFFLINE 100% COMPATÍVEIS
+  // LOADERS OFFLINE
   // ============================================================
-
   static List<Map<String, dynamic>> _resolverLista(dynamic data, String chave) {
     if (data is Map && data.containsKey(chave)) {
       return List<Map<String, dynamic>>.from(data[chave]);
@@ -258,7 +275,7 @@ class SincronizacaoService {
   }
 
   // ============================================================
-  // 📤 ENVIAR PEDIDOS PENDENTES — AJUSTADO
+  // 📤 ENVIAR PEDIDOS PENDENTES
   // ============================================================
   static Future<void> enviarPedidosPendentes(
       BuildContext context,
@@ -267,7 +284,7 @@ class SincronizacaoService {
       ) async {
 
     final prefs = await SharedPreferences.getInstance();
-    final chave = 'pedidos_pendentes';       // 🔥 CORRIGIDO AQUI!
+    final chave = 'pedidos_pendentes';
 
     final fila = prefs.getStringList(chave) ?? <String>[];
 
