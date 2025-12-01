@@ -1,4 +1,4 @@
-package com.example.crm_tooca
+package com.toocagroup.crm
 
 import io.flutter.embedding.android.FlutterActivity
 

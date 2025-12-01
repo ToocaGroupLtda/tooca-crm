@@ -5,8 +5,8 @@ plugins {
 }
 
 android {
-    namespace = "com.example.crm_tooca"
-    compileSdk = 36     // ← OBRIGATÓRIO
+    namespace = "com.toocagroup.crm"
+    compileSdk = 36             // obrigatorio para Android 14
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -19,16 +19,33 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.crm_tooca"
-        minSdk = 29      // Android 10
-        targetSdk = 34   // Pode deixar 34, 35 ou 36 — nenhum problema
+        applicationId = "com.toocagroup.crm"
+        minSdk = 29              // Android 10
+        targetSdk = 34           // recomendado
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
 
+    // =====================================================
+    // 🔐 ASSINATURA PARA PLAY STORE — RELEASE SIGNED
+    // =====================================================
+    signingConfigs {
+        create("release") {
+            storeFile = file("tooca.keystore")
+            storePassword = "Vendas2025$$"
+            keyAlias = "tooca"
+            keyPassword = "Vendas2025$$"
+        }
+    }
+
+    // =====================================================
+    // 🏗️ TIPOS DE BUILD (DEBUG / RELEASE)
+    // =====================================================
     buildTypes {
-        release {
-            signingConfig = signingConfigs.getByName("debug")
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }
