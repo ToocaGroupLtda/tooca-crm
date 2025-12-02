@@ -21,8 +21,8 @@ android {
     defaultConfig {
         applicationId = "com.toocagroup.crm"
         minSdk = 29              // Android 10
-        targetSdk = 34           // recomendado
-        versionCode = flutter.versionCode
+        targetSdk = 35           // recomendado
+        versionCode = 4
         versionName = flutter.versionName
     }
 
