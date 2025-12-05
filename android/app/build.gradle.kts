@@ -22,7 +22,7 @@ android {
         applicationId = "com.toocagroup.crm"
         minSdk = 29              // Android 10
         targetSdk = 35           // recomendado
-        versionCode = 4
+        versionCode = 5
         versionName = flutter.versionName
     }
 

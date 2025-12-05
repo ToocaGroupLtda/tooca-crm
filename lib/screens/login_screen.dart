@@ -195,17 +195,10 @@ class _LoginScreenState extends State<LoginScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
           child: Column(
             children: [
-              Image.asset(
-                'assets/logo_tooca.png',
-                height: 100,
-                errorBuilder: (_, __, ___) =>
-                const Icon(Icons.business, size: 80, color: Colors.amber),
-              ),
 
-              const SizedBox(height: 20),
 
               const Text(
-                'Tooca CRM',
+                'Tooca Crm ',
                 style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
               ),
 
@@ -271,6 +264,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 '© Tooca Group 2025',
                 style: TextStyle(color: Colors.black54, fontSize: 13),
               ),
+
             ],
           ),
         ),
