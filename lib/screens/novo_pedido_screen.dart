@@ -39,6 +39,7 @@ class NovoPedidoScreen extends StatefulWidget {
     this.filaIndex,
     this.pedidoJson, // ✅ adiciona aqui
   }) : super(key: key);
+
   @override
   _NovoPedidoScreenState createState() => _NovoPedidoScreenState();
 }
@@ -203,7 +204,7 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
     if (condicoes.isEmpty && _isOnline) {
       try {
         final url = Uri.parse(
-            'https://app.toocagroup.com.br/api/listar_condicoes.php?empresa_id=${widget.empresaId}&usuario_id=${widget.usuarioId}&plano=${widget.plano}'
+            'https://toocagroup.com.br/api/listar_condicoes.php?empresa_id=${widget.empresaId}&usuario_id=${widget.usuarioId}&plano=${widget.plano}'
         );
         final res = await http.get(url);
         final data = jsonDecode(res.body);
@@ -290,20 +291,30 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
   }
 
   void carregarDoRascunho(Map<String, dynamic> dadosRaw) {
-    // aceita tanto plano quanto {dados:{...}}
-    final dados = Map<String, dynamic>.from(dadosRaw['dados'] ?? dadosRaw);
+    // 🔥 OFFLINE JÁ VEM NO FORMATO FINAL
+    final dados = Map<String, dynamic>.from(dadosRaw);
 
     setState(() {
       clienteId = dados['cliente_id'] ?? dados['clienteId'];
       tabelaId = dados['tabela_id'] ?? dados['tabelaId'];
       condicaoId = dados['cond_pagto_id'] ?? dados['condicaoId'];
-      descontoGeral = (dados['descontoGeral'] ?? 0).toDouble();
+
+      descontoGeral = (dados['descontoGeral'] is num)
+          ? (dados['descontoGeral'] as num).toDouble()
+          : 0.0;
+
       obsCtrl.text = dados['observacao'] ?? '';
-      itens = List<Map<String, dynamic>>.from(dados['itens'] ?? []);
+
+      itens = (dados['itens'] is List)
+          ? List<Map<String, dynamic>>.from(dados['itens'])
+          : [];
+
       clienteBuscaCtrl.text = dados['cliente_nome'] ?? '';
 
-      // para manter o dropdown selecionado
-      if (tabelaId != null) _tabelaSelecionada = tabelaId.toString();
+      // mantém dropdown sincronizado
+      if (tabelaId != null) {
+        _tabelaSelecionada = tabelaId.toString();
+      }
     });
   }
 
@@ -318,7 +329,7 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
         debugPrint('📦 Pedido carregado do cache local.');
       } else {
         final res = await http.post(
-          Uri.parse('https://app.toocagroup.com.br/api/listar_pedido_detalhes.php'),
+          Uri.parse('https://toocagroup.com.br/api/listar_pedido_detalhes.php'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({
             'pedido_id': pedidoId,
@@ -339,8 +350,12 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
 
       final pedido = data['pedido'];
 
+      // 🔓 MASTER SEMPRE PODE EDITAR QUALQUER PEDIDO
       final donoPedido = int.tryParse(pedido['usuario_id'].toString()) ?? 0;
-      if (!widget.isAdmin && donoPedido != widget.usuarioId) {
+
+      final bool isMaster = widget.pedidoJson?['forcar_master'] == true;
+
+      if (!isMaster && donoPedido != widget.usuarioId) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('❌ Você não tem permissão para editar este pedido.'),
@@ -349,6 +364,7 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
         Navigator.pop(context);
         return;
       }
+
 
       // =====================================================
 // 🟡 NORMALIZAÇÃO — cliente vindo da API
@@ -422,7 +438,8 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
 
 
         // TABELA DE PREÇO
-        tabelaId = tempTabelaId;
+        tabelaId = tempTabelaId == 0 ? null : tempTabelaId;
+
         _tabelaSelecionada = tempTabelaSelecionada;
 
         // CONDIÇÃO DE PAGAMENTO
@@ -468,7 +485,7 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
             'produto_id': produtoId,
             'nome': nome,
             'codigo': codigo,
-            'qtd': (double.tryParse('${item['quantidade']}') ?? 1).toDouble(),
+            'qtd': (double.tryParse('${item['quantidade']}') ?? 1).round(),
             'preco_base': precoBase.isFinite ? precoBase : 0.0,
             'preco': precoFinal,
             'desconto': desc,
@@ -489,37 +506,78 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
 
     setState(() {
       for (var i = 0; i < itens.length; i++) {
-        final prodId = itens[i]['produto_id'];
-        if (prodId == null) continue;
 
-        // Busca o produto local correspondente
-        final Map<String, dynamic> prodLocal = produtos.cast<Map<String, dynamic>>().firstWhere(
-              (p) => int.tryParse('${p['id']}') == int.tryParse('$prodId'),
-          orElse: () => <String, dynamic>{},
-        );
+        // =============================
+        // 1️⃣ Identificação do produto
+        // =============================
+        int? prodId = itens[i]['produto_id'] == null
+            ? null
+            : int.tryParse('${itens[i]['produto_id']}');
 
+        String codigo = (itens[i]['codigo'] ?? '').toString().trim();
+
+        Map<String, dynamic> prodLocal = {};
+
+        // Tenta achar pelo ID
+        if (prodId != null) {
+          prodLocal = produtos.cast<Map<String, dynamic>>().firstWhere(
+                (p) => int.tryParse('${p['id']}') == prodId,
+            orElse: () => {},
+          );
+        }
+
+        // Se não achou, tenta pelo código
+        if (prodLocal.isEmpty && codigo.isNotEmpty) {
+          prodLocal = produtos.cast<Map<String, dynamic>>().firstWhere(
+                (p) => (p['codigo'] ?? '').toString().trim() == codigo,
+            orElse: () => {},
+          );
+        }
+
+        // Não achou NADA → não recalcula
         if (prodLocal.isEmpty) continue;
 
 
-        // Novo preço base pela nova tabela
-        final double base = buscarPrecoPorTabela(prodLocal, novaTabelaId);
-        if (base <= 0) {
-          // Se não houver preço na nova tabela, mantém o base antigo
-          // (Se preferir zerar, troque por: itens[i]['preco_base'] = 0.0;)
-          continue;
+        // =============================
+        // 2️⃣ Buscar novo preço base
+        // =============================
+        double novoBase = buscarPrecoPorTabela(prodLocal, novaTabelaId);
+
+        // Tentativa 2: preço único vindo da API
+        if (novoBase <= 0 && prodLocal['preco'] != null) {
+          novoBase = double.tryParse('${prodLocal['preco']}') ?? 0.0;
         }
 
-        // Mantém o desconto atual do item
-        final double desc = ((itens[i]['desconto'] as num?)?.toDouble() ?? 0.0).clamp(0.0, 100.0);
+        // Tentativa 3: usa preço_base antigo para não quebrar o item
+        if (novoBase <= 0) {
+          novoBase = (itens[i]['preco_base'] as num?)?.toDouble() ?? 0.0;
+        }
+
+        // Se ainda for zero → não dá pra recalcular
+        if (novoBase <= 0) continue;
 
 
-        itens[i]['preco_base'] = base;
-        itens[i]['preco'] = double.parse((base * (1 - (desc / 100))).toStringAsFixed(2));
+        // =============================
+        // 3️⃣ Mantém desconto e quantidade
+        // =============================
+        final double desconto = ((itens[i]['desconto'] as num?)?.toDouble() ?? 0)
+            .clamp(0.0, 100.0);
+
+        final double novoPrecoFinal =
+        double.parse((novoBase * (1 - desconto / 100)).toStringAsFixed(2));
+
+        // =============================
+        // 4️⃣ Atualiza item
+        // =============================
+        itens[i]['preco_base'] = novoBase;
+        itens[i]['preco'] = novoPrecoFinal;
       }
     });
 
     salvarRascunho();
   }
+
+
 
 
 // =======================================================
@@ -597,7 +655,8 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
   // --- Salva NOVO pedido offline (com substituição se vier da fila) ---
   Future<void> salvarNovoPedidoOffline() async {
     final prefs = await SharedPreferences.getInstance();
-    final chave = 'pedidos_pendentes';
+    final chave = 'pedidos_pendentes_${widget.empresaId}';
+
     final fila = prefs.getStringList(chave) ?? <String>[];
 
     final clienteNomeSelecionado = (clientes.firstWhere(
@@ -617,8 +676,8 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
     )['nome'] ?? '---');
 
     final dados = {
-      'empresa_id': widget.empresaId, // ✅ novo
-      'plano': widget.plano,          // ✅ novo
+      'empresa_id': widget.empresaId,
+      'plano': widget.plano,
       'usuario_id': widget.usuarioId,
       'cliente_id': clienteId,
       'cliente_nome': clienteNomeSelecionado,
@@ -628,7 +687,14 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
       'cond_pagto_id': condicaoId,
       'condicao_nome': condicaoNomeSelecionada,
       'observacao': obsCtrl.text,
-      'itens': itens,
+      'itens': itens.map((item) => {
+        'produto_id': item['produto_id'],
+        'quantidade': item['qtd'],
+        'preco_unit': item['preco'],
+        'desconto': item['desconto'],
+        'nome': item['nome'],
+        'codigo': item['codigo'],
+      }).toList(),
       'total': calcularTotal(),
     };
 
@@ -637,6 +703,7 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
       'dados': dados,
       'timestamp': DateTime.now().toIso8601String(),
     };
+
 
     // substitui se veio com filaIndex
     if (widget.filaIndex != null &&
@@ -724,11 +791,22 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
 
   double calcularTotal() {
     double total = 0;
+
     for (var item in itens) {
-      total += item['qtd'] * item['preco'];
+      final qtd = (item['qtd'] is num)
+          ? (item['qtd'] as num).toDouble()
+          : double.tryParse(item['qtd']?.toString() ?? '0') ?? 0;
+
+      final preco = (item['preco'] is num)
+          ? (item['preco'] as num).toDouble()
+          : double.tryParse(item['preco']?.toString() ?? '0') ?? 0;
+
+      total += qtd * preco;
     }
+
     return total;
   }
+
 
   void aplicarDescontoGeral() {
     setState(() {
@@ -756,7 +834,31 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
 
 // Se for novo, sugiro pré-preencher o campo de desconto com o descontoGeral atual
     final qtdCtrl  = TextEditingController(text: isEdit ? '${item!['qtd']}' : '1');
-    final descCtrl = TextEditingController(text: isEdit ? '${item!['desconto']}' : (descontoGeral > 0 ? '$descontoGeral' : ''));
+    // DESCONTO (formatado corretamente)
+    double descValue = 0;
+
+// Se estiver editando um item existente
+    if (isEdit) {
+      descValue = (item!['desconto'] as num?)?.toDouble() ?? 0;
+    } else {
+      // Novo item → usa o desconto geral como sugestão
+      descValue = descontoGeral;
+    }
+
+// Formatação do desconto:
+// 0 → '' (campo vazio)
+// 20.0 → '20'
+// 7.5 → '7.5'
+    String descFormatado;
+    if (descValue == 0) {
+      descFormatado = '';
+    } else if (descValue % 1 == 0) {
+      descFormatado = descValue.toInt().toString();
+    } else {
+      descFormatado = descValue.toString();
+    }
+
+    final descCtrl = TextEditingController(text: descFormatado);
 
 // Preço mostrado é SEMPRE derivado de (preco_base, desconto digitado)
     final double precoInicial = precoBase * (1 - ((double.tryParse(descCtrl.text.replaceAll(',', '.')) ?? 0.0) / 100));
@@ -865,7 +967,7 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
   Future<void> salvarCachePedido(int pedidoId) async {
     try {
       final res = await http.get(
-        Uri.parse('https://app.toocagroup.com.br/api/listar_pedido_detalhes.php?id=$pedidoId'),
+        Uri.parse('https://toocagroup.com.br/api/listar_pedido_detalhes.php?id=$pedidoId'),
       );
       final data = jsonDecode(utf8.decode(res.bodyBytes));
       if (data['status'] == 'ok') {
@@ -880,7 +982,8 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
   // --- Salva EDIÇÃO offline (update) com substituição se vier da fila ---
   Future<void> salvarPedidoLocalmente() async {
     final prefs = await SharedPreferences.getInstance();
-    final chave = 'pedidos_pendentes';
+    final chave = 'pedidos_pendentes_${widget.empresaId}';
+
     final fila = prefs.getStringList(chave) ?? <String>[];
 
     final clienteNomeSelecionado = (clientes.firstWhere(
@@ -901,7 +1004,10 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
 
     final dados = {
       'pedido_id': widget.pedidoId,
+      'empresa_id': widget.empresaId, // 🔥 faltava
+      'plano': widget.plano,          // 🔥 faltava
       'usuario_id': widget.usuarioId,
+
       'cliente_id': clienteId,
       'cliente_nome': clienteNomeSelecionado,
       'tabela_id': tabelaId,
@@ -950,14 +1056,17 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
   }
 
   Future<void> enviarPedido() async {
-    if (itens.isEmpty || clienteId == null || tabelaId == null || condicaoId == null) {
+    // =========================
+    // Validações básicas
+    // =========================
+    if (itens.isEmpty || clienteId == null || condicaoId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Preencha todos os campos e adicione itens.')),
       );
       return;
     }
 
-    // 🔒 Limite do plano Free
+    // 🔒 Limite plano Free
     if (widget.plano == 'free' && itens.length > 5) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Plano Free permite até 5 itens por pedido.')),
@@ -967,51 +1076,96 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
 
     setState(() => enviando = true);
 
-    // OFFLINE → salva local (novo/update) e sai
+    // =====================================================
+    // 📴 OFFLINE → salva local e sai
+    // =====================================================
     if (!_isOnline) {
       if (widget.pedidoId == null) {
-        await salvarNovoPedidoOffline();   // {'tipo':'novo'}
+        await salvarNovoPedidoOffline();
       } else {
-        await salvarPedidoLocalmente();     // {'tipo':'update'}
+        await salvarPedidoLocalmente();
       }
       setState(() => enviando = false);
       return;
     }
-    // ONLINE
-    final itensJson = itens.map((item) => {
-      'produto_id': item['produto_id'],
-      'quantidade': item['qtd'],
-      'preco_unit': item['preco'],
-      'desconto': item['desconto'],
-      'nome': item['nome'],
-      'codigo': item['codigo'],
-    }).toList();
 
-    final body = {
-      'empresa_id': widget.empresaId.toString(),  // ✅
-      'usuario_id': widget.usuarioId.toString(),
-      'plano': widget.plano,                      // ✅
-      'cliente_id': clienteId.toString(),
-      'tabela_id': tabelaId.toString(),
-      'cond_pagto_id': condicaoId.toString(),
-      'observacao': obsCtrl.text,
-      'itens': jsonEncode(itensJson),
-    };
-    if (widget.pedidoId != null) body['pedido_id'] = widget.pedidoId.toString();
-
+    // =====================================================
+    // 🌐 ONLINE → ENVIO CORRETO PARA A API
+    // =====================================================
     try {
+      // 🔢 TOTAL FINAL
+      final double totalPedido = calcularTotal();
+
+      // ❌ Bloqueia pedido inválido
+      if (totalPedido <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Total do pedido inválido.')),
+        );
+        setState(() => enviando = false);
+        return;
+      }
+
+      // =========================
+      // 📦 PAYLOAD PLANO (SEM ANINHAMENTO)
+      // =========================
+      final payload = {
+        "usuario_id": widget.usuarioId,     // 🔥 OBRIGATÓRIO
+        "cliente_id": clienteId,
+        "tabela_id": _tabelaSelecionada,     // string ou int
+        "cond_pagto_id": condicaoId,
+        "observacao": obsCtrl.text,
+        "total": totalPedido,                // 🔥 OBRIGATÓRIO
+
+        "itens": itens.map((item) {
+          final double qtd = (item['qtd'] as num).toDouble();
+          final double preco = (item['preco'] as num).toDouble();
+          final double subtotal = qtd * preco;
+
+          return {
+            "produto_id": item['produto_id'],
+            "quantidade": qtd,
+            "preco_unit": preco,
+            "desconto": item['desconto'],
+
+            "subtotal": subtotal,             // 🔥 OBRIGATÓRIO
+            "nome": item['nome'],
+            "codigo": item['codigo'],
+          };
+        }).toList(),
+
+        if (widget.pedidoId != null)
+          "pedido_id": widget.pedidoId,
+      };
+
+      // 🔍 DEBUG OBRIGATÓRIO (remova depois de estabilizar)
+      debugPrint('🚀 PAYLOAD FINAL => ${jsonEncode(payload)}');
+
       final res = await http.post(
-        Uri.parse('https://app.toocagroup.com.br/api/salvar_pedido.php'),
-        body: body,
+        Uri.parse('https://toocagroup.com.br/api/criar_pedido.php'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(payload),
       );
+
       final data = jsonDecode(res.body);
 
+      // =========================
+      // ✅ Sucesso
+      // =========================
       if (data['status'] == 'ok') {
-        await salvarCachePedido(data['pedido_id']);
-        if (widget.pedidoId == null) await excluirRascunho();
+        final pedidoIdSalvo = data['pedido_id'];
+
+        if (pedidoIdSalvo != null) {
+          await salvarCachePedido(pedidoIdSalvo);
+        }
+
+        if (widget.pedidoId == null) {
+          await excluirRascunho();
+        }
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('✅ Pedido salvo com sucesso!')),
         );
+
         Navigator.pushAndRemoveUntil(
           context,
           MaterialPageRoute(
@@ -1024,15 +1178,24 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
           ),
               (_) => false,
         );
-
-      } else {
+      }
+      // =========================
+      // ❌ Erro lógico → fallback offline
+      // =========================
+      else {
         if (widget.pedidoId == null) {
           await salvarNovoPedidoOffline();
         } else {
           await salvarPedidoLocalmente();
         }
       }
-    } catch (_) {
+    }
+    // =========================
+    // ❌ Erro de conexão → offline
+    // =========================
+    catch (e) {
+      debugPrint('❌ Erro ao enviar pedido: $e');
+
       if (widget.pedidoId == null) {
         await salvarNovoPedidoOffline();
       } else {
@@ -1061,6 +1224,15 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
       ),
     ) ?? false;
   }
+  String _formatarDesconto(dynamic valor) {
+    if (valor == null) return "0";
+
+    final d = (valor is num)
+        ? valor.toDouble()
+        : double.tryParse(valor.toString()) ?? 0;
+
+    return (d % 1 == 0) ? d.toInt().toString() : d.toString();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1081,12 +1253,12 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
     return WillPopScope(
       onWillPop: confirmarSaida,
       child: Scaffold(
-        backgroundColor: const Color(0xFFF5F5F5),
-        appBar: AppBar(
-          title: Text(widget.pedidoId == null ? 'Novo Pedido' : 'Editar Pedido'),
-          backgroundColor: const Color(0xFFFFCC00),
-          foregroundColor: Colors.black,
-        ),
+          backgroundColor: const Color(0xFFF5F5F5),
+          appBar: AppBar(
+            title: Text(widget.pedidoId == null ? 'Novo Pedido' : 'Editar Pedido'),
+            backgroundColor: const Color(0xFFFFCC00),
+            foregroundColor: Colors.black,
+          ),
           body: Padding(
             padding: const EdgeInsets.all(12),
             child: Column(
@@ -1147,12 +1319,18 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
                           ],
                           onChanged: (value) {
                             setState(() {
-                              _tabelaSelecionada = value;
-                              tabelaId = int.tryParse(value ?? '') ?? 0;
+                              _tabelaSelecionada = value;         // sempre string
+                              tabelaId = int.tryParse(value ?? '') ?? null;
                             });
-                            recalcPrecosItensPorTabela(tabelaId);
+
+                            // recalcula só se for tabela numérica
+                            if (tabelaId != null) {
+                              recalcPrecosItensPorTabela(tabelaId);
+                            }
+
                             salvarRascunho();
                           },
+
                         ),
 
                         const SizedBox(height: 10),
@@ -1171,7 +1349,7 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
 
                             return DropdownMenuItem<int>(
                               value: id,
-                              child: Text(nome),  // ✅ SOMENTE 1 COLUNA
+                              child: Text(nome),  // SOMENTE 1 COLUNA
                             );
                           }).toList(),
                           onChanged: (v) {
@@ -1181,6 +1359,7 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
                             }
                           },
                         ),
+
 
                         const SizedBox(height: 10),
 
@@ -1296,91 +1475,274 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
                         ),
                         SizedBox(height: 10),
 
-                        // =======================
-                        // ITENS (SEM LISTVIEW)
-                        // =======================
+// =======================
+// ITENS (SEM LISTVIEW)
+// =======================
                         Column(
                           children: itens.asMap().entries.map((e) {
                             final i = e.key;
                             final item = e.value;
                             final subtotal = item['qtd'] * item['preco'];
 
-                            return ListTile(
-                              title: Text("${item['codigo']} - ${item['nome']}"),
-                              subtitle: Text(
-                                "Qtd: ${item['qtd']} | "
-                                    "Unit: R\$ ${item['preco'].toStringAsFixed(2)} | "
-                                    "Sub: R\$ ${subtotal.toStringAsFixed(2)}",
-                              ),
-                              onTap: () => abrirPopupItem(index: i),
-                              trailing: IconButton(
-                                icon: const Icon(Icons.delete, color: Colors.red),
-                                onPressed: () {
-                                  setState(() => itens.removeAt(i));
-                                  salvarRascunho();
-                                },
-                              ),
+                            return Column(
+                              children: [
+                                ListTile(
+                                  title: Text("${item['codigo']} - ${item['nome']}"),
+
+                                  // ⭐ AQUI FOI ALTERADO (Row → Wrap) ⭐
+                                  subtitle: Wrap(
+                                    spacing: 12,
+                                    runSpacing: 6,
+                                    children: [
+
+                                      // QTD
+                                      Text(
+                                        "Qtd: ${item['qtd']}",
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+
+                                      // UNITÁRIO
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                        decoration: BoxDecoration(
+                                          color: Color(0xFFFFE680),
+                                          borderRadius: BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          "Unit: R\$ ${item['preco'].toStringAsFixed(2)}",
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 14,
+                                            color: Colors.black,
+                                          ),
+                                        ),
+                                      ),
+
+                                      // DESCONTO (se existir)
+                                      if ((item['desconto'] as num?)?.toDouble() != null &&
+                                          (item['desconto'] as num).toDouble() > 0)
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                          decoration: BoxDecoration(
+                                            color: Colors.red.shade100,
+                                            borderRadius: BorderRadius.circular(4),
+                                          ),
+                                          child: Text(
+                                            "Desc ${_formatarDesconto(item['desconto'])}%",
+
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.red,
+                                            ),
+                                          ),
+                                        ),
+
+                                      // SUBTOTAL
+                                      Text(
+                                        "Sub: R\$ ${(item['qtd'] * item['preco']).toStringAsFixed(2)}",
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.green,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+
+                                  onTap: () => abrirPopupItem(index: i),
+
+                                  trailing: IconButton(
+                                    icon: const Icon(Icons.delete, color: Colors.red),
+                                    onPressed: () {
+                                      setState(() => itens.removeAt(i));
+                                      salvarRascunho();
+                                    },
+                                  ),
+                                ),
+
+                                // Separador bonito entre itens
+                                const Padding(
+                                  padding: EdgeInsets.symmetric(horizontal: 12),
+                                  child: Divider(
+                                    color: Colors.grey,
+                                    thickness: 0.4,
+                                  ),
+                                ),
+                              ],
                             );
                           }).toList(),
                         ),
 
+
+
+
                         const Divider(height: 30),
 
-                        // =======================
-                        // DESCONTO GERAL
-                        // =======================
-                        TextField(
-                          decoration: const InputDecoration(labelText: 'Desconto Geral %'),
-                          keyboardType: TextInputType.number,
-                          onChanged: (v) {
-                            final novoDesconto =
-                                double.tryParse(v.replaceAll(',', '.')) ?? 0;
-                            descontoGeral = novoDesconto;
-                            aplicarDescontoGeral();
-                          },
-                        ),
 
-                        const SizedBox(height: 20),
 
-                        Text(
-                          'Total: R\$ ${calcularTotal().toStringAsFixed(2)}',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 18,
-                          ),
-                        ),
 
-                        const SizedBox(height: 20),
+
                       ],
                     ),
                   ),
                 ),
 
                 // =======================
-                // BOTÃO FINAL FIXO
-                // =======================
-                ElevatedButton.icon(
-                  icon: enviando
-                      ? const CircularProgressIndicator(strokeWidth: 2, color: Colors.black)
-                      : const Icon(Icons.check, color: Colors.black),
-                  label: Text(
-                    enviando
-                        ? 'Salvando...'
-                        : (!_isOnline && widget.pedidoId == null
-                        ? 'Salvar offline'
-                        : (!_isOnline && widget.pedidoId != null
-                        ? 'Atualizar offline'
-                        : (widget.pedidoId == null
-                        ? 'Salvar Pedido'
-                        : 'Atualizar Pedido'))),
-                    style: const TextStyle(color: Colors.black),
+// RODAPÉ FIXO — CLEAN FINAL (BAIXO)
+// =======================
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    border: Border(top: BorderSide(color: Colors.grey.shade300)),
                   ),
-                  onPressed: enviando ? null : enviarPedido,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFFFCC00),
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+
+                      // 🔹 DESCONTO GERAL
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Desconto geral',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.grey,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          InkWell(
+                            borderRadius: BorderRadius.circular(6),
+                            onTap: () {
+                              showDialog(
+                                context: context,
+                                builder: (_) {
+                                  final ctrl = TextEditingController(
+                                    text: descontoGeral == 0
+                                        ? ''
+                                        : _formatarDesconto(descontoGeral),
+                                  );
+
+                                  return AlertDialog(
+                                    title: const Text('Desconto Geral %'),
+                                    content: TextField(
+                                      controller: ctrl,
+                                      keyboardType:
+                                      const TextInputType.numberWithOptions(decimal: true),
+                                      decoration:
+                                      const InputDecoration(hintText: '0'),
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(context),
+                                        child: const Text('Cancelar'),
+                                      ),
+                                      ElevatedButton(
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: const Color(0xFFFFCC00),
+                                          foregroundColor: Colors.black,
+                                        ),
+                                        onPressed: () {
+                                          final txt =
+                                          ctrl.text.replaceAll(',', '.').trim();
+                                          setState(() {
+                                            descontoGeral =
+                                                double.tryParse(txt) ?? 0;
+                                            aplicarDescontoGeral();
+                                            salvarRascunho();
+                                          });
+                                          Navigator.pop(context);
+                                        },
+                                        child: const Text('Aplicar'),
+                                      ),
+                                    ],
+                                  );
+                                },
+                              );
+                            },
+                            child: Container(
+                              width: 56,
+                              height: 30,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: Colors.grey.shade200,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                descontoGeral == 0
+                                    ? '%'
+                                    : '${_formatarDesconto(descontoGeral)}%',
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.black54,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      const Spacer(),
+
+                      // 🔹 TOTAL + SALVAR (COLADOS)
+                      Row(
+                        children: [
+                          Text(
+                            'Total R\$ ${calcularTotal().toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          SizedBox(
+                            height: 32,
+                            child: ElevatedButton(
+                              onPressed: enviando ? null : enviarPedido,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFFFCC00),
+                                padding:
+                                const EdgeInsets.symmetric(horizontal: 12),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                              ),
+                              child: enviando
+                                  ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.black,
+                                ),
+                              )
+                                  : Text(
+                                (!_isOnline && widget.pedidoId == null
+                                    ? 'Offline'
+                                    : (!_isOnline && widget.pedidoId != null
+                                    ? 'Atualizar'
+                                    : (widget.pedidoId == null
+                                    ? 'Salvar'
+                                    : 'Atualizar'))),
+                                style: const TextStyle(
+                                  color: Colors.black,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
+
               ],
             ),
           )

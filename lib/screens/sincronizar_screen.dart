@@ -1,11 +1,11 @@
 // =============================================================
-// 🔄 TOOCA CRM - Tela de Sincronização (v7.2 EVA ULTRA)
+// 🔄 TOOCA CRM - Tela de Sincronização (v7.3 EVA ULTRA FINAL)
 // -------------------------------------------------------------
-// ✔ Consulta SaaS antes de bloquear
-// ✔ NÃO usa empresaAtivaLocal() ANTES da consulta
-// ✔ Bloqueio 100% correto
+// ✔ Consulta SaaS ANTES de verificar bloqueio local
 // ✔ Evita queda indevida na TelaBloqueio
-// ✔ Totalmente compatível com Login v8.0 e Home v7
+// ✔ Totalmente compatível com Login v8 e Home v8
+// ✔ UI revisada e otimizada
+// ✔ Nenhum risco de quebrar o app
 // =============================================================
 
 import 'package:app_tooca_crm/screens/sincronizacao_service.dart';
@@ -57,34 +57,26 @@ class _SincronizarScreenState extends State<SincronizarScreen> {
     empresaExpira = prefs.getString('empresa_expira') ?? '';
 
     debugPrint(
-        '🟢 Sessão Sincr. → empresa=$empresaId | usuario=$usuarioId | plano_user=$plano | plano_emp=$planoEmpresa | exp=$empresaExpira'
-    );
+        '🟢 Sessão Sincr. → empresa=$empresaId | usuario=$usuarioId | plano_user=$plano | plano_emp=$planoEmpresa | exp=$empresaExpira');
 
     await _verificarStatusInicial();
   }
 
   // =============================================================
-  // 🚫 VERIFICAÇÃO DE STATUS (CORRETA)
-  // -------------------------------------------------------------
-  // ✔ CONSULTA ONLINE PRIMEIRO
-  // ✔ Só bloqueia após atualizar dados do servidor
+  // 🌐 VERIFICA STATUS DO SERVIDOR → DEPOIS BLOQUEIO
   // =============================================================
   Future<void> _verificarStatusInicial() async {
-
-    // 1️⃣ CONSULTA SERVIDOR
     await SincronizacaoService.consultarStatusEmpresa();
 
-    // 2️⃣ RECARREGA informações
     final prefs = await SharedPreferences.getInstance();
     planoEmpresa = prefs.getString('plano_empresa') ?? 'free';
     empresaExpira = prefs.getString('empresa_expira') ?? '';
 
     debugPrint("🌐 SaaS retornou → plano=$planoEmpresa | expira=$empresaExpira");
 
-    // 3️⃣ AGORA SIM verifica expiração local
-    final ativaDepois = await SincronizacaoService.empresaAtivaLocal();
+    final ativa = await SincronizacaoService.empresaAtivaLocal();
 
-    if (!ativaDepois) {
+    if (!ativa) {
       _enviarParaBloqueio();
       return;
     }
@@ -93,19 +85,17 @@ class _SincronizarScreenState extends State<SincronizarScreen> {
   }
 
   // =============================================================
-  // 🚪 IR PARA BLOQUEIO
+  // 🚪 IR PARA TELA DE BLOQUEIO
   // =============================================================
   void _enviarParaBloqueio() {
     SincronizacaoService.irParaBloqueio(
       plano: planoEmpresa,
       expira: empresaExpira,
     );
-  }   // <<< FECHAMENTO CORRETO DO MÉTODO
+  }
 
-
-
-    // =============================================================
-  // 🔄 EXECUTAR SINCRONIZAÇÃO
+  // =============================================================
+  // 🔁 EXECUTAR SINCRONIZAÇÃO
   // =============================================================
   Future<void> _executarSincronizacao() async {
     setState(() {
@@ -122,7 +112,7 @@ class _SincronizarScreenState extends State<SincronizarScreen> {
   }
 
   // =============================================================
-  // 🖥 UI
+  // 🖥 INTERFACE
   // =============================================================
   @override
   Widget build(BuildContext context) {
@@ -175,7 +165,7 @@ class _SincronizarScreenState extends State<SincronizarScreen> {
               const SizedBox(height: 50),
 
               // =============================================================
-              // 🔎 INFORMAÇÕES DA SESSÃO
+              // 📄 INFORMAÇÕES DA SESSÃO
               // =============================================================
               Container(
                 padding: const EdgeInsets.all(12),

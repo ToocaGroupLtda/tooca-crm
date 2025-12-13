@@ -67,7 +67,7 @@ class _ProdutosScreenState extends State<ProdutosScreen> {
     });
 
     final url = Uri.parse(
-      'https://app.toocagroup.com.br/api/listar_produtos.php'
+      'https://toocagroup.com.br/api/listar_produtos.php'
           '?empresa_id=${widget.empresaId}&usuario_id=${widget.usuarioId}&plano=${widget.plano}',
     );
 

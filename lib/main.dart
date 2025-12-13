@@ -1,11 +1,12 @@
 // =============================================================
-// 🚀 TOOCA CRM - Main App (v5.1 EVA SUPREMA SEM BLOQUEIO)
+// 🚀 TOOCA CRM - Main App (v6.0 EVA SUPREMA GOLD)
 // -------------------------------------------------------------
 // ✔ Sem SplashScreen
 // ✔ Home NUNCA bloqueia
-// ✔ Login controla bloqueio
-// ✔ Sincronizar controla bloqueio
-// ✔ Main só verifica se existe sessão
+// ✔ Login + Sincronizar controlam bloqueio
+// ✔ Main apenas decide se existe sessão válida
+// ✔ Proteção contra sessão corrompida ou banco antigo
+// ✔ Remove usuário_id fantasma (>5)
 // =============================================================
 
 import 'package:flutter/material.dart';
@@ -45,30 +46,40 @@ class _MyAppState extends State<MyApp> {
     _carregarSessaoInicial();
   }
 
-  // ============================================================
-  // 🔥 Carregar sessão e decidir tela inicial
-  // ============================================================
+  // =============================================================
+  // 🔥 Carregar sessão inicial com proteção anti-banco-antigo
+  // =============================================================
   Future<void> _carregarSessaoInicial() async {
     final prefs = await SharedPreferences.getInstance();
 
-    final usuarioId = prefs.getInt('usuario_id');
-    final empresaId = prefs.getInt('empresa_id');
-    final email = prefs.getString('email') ?? '';
-    final planoUser = prefs.getString("plano_usuario") ?? "user";
+    int? usuarioId = prefs.getInt('usuario_id');
+    int? empresaId = prefs.getInt('empresa_id');
+    String email = prefs.getString('email') ?? '';
+    String planoUser = prefs.getString("plano_usuario") ?? "user";
 
-    // 1️⃣ Não logado → Login
-    if (usuarioId == null || empresaId == null) {
+    // 🛑 Proteção anti-sessão corrompida → evita banco errado
+    if (usuarioId == null || empresaId == null || usuarioId <= 0 || empresaId <= 0) {
+      await prefs.clear();
       setState(() => _startScreen = const LoginScreen());
       return;
     }
 
-    // 2️⃣ Logado → Home (SEM BLOQUEIO)
-    setState(() => _startScreen = HomeScreen(
-      usuarioId: usuarioId,
-      empresaId: empresaId,
-      plano: planoUser,
-      email: email,
-    ));
+    // 🛑 Proteção anti-usuário fantasma (id > 999 ou negativo)
+    if (usuarioId > 999 || empresaId > 999) {
+      await prefs.clear();
+      setState(() => _startScreen = const LoginScreen());
+      return;
+    }
+
+    // 🟢 Sessão válida → vai para Home (sem bloqueio)
+    setState(() {
+      _startScreen = HomeScreen(
+        usuarioId: usuarioId,
+        empresaId: empresaId,
+        plano: planoUser,
+        email: email,
+      );
+    });
   }
 
   @override

@@ -1,12 +1,10 @@
 // =============================================================
-// 🔄 TOOCA CRM - Sincronização (v8.4 EVA GOLD SUPREMA FINAL)
+// 🔄 TOOCA CRM - Sincronização (v8.5 EVA GOLD FIXED)
 // -------------------------------------------------------------
-// ✔ RESET AUTOMÁTICO de usuario_id inválido (>5)
-// ✔ Nunca usa usuario_id fantasma (ex: 9)
-// ✔ Todos os loaders OFFLINE corrigidos
-// ✔ Suporta TODOS os formatos JSON da API ou local
-// ✔ Envio de pedidos pendentes compatível com NovoPedidoScreen
-// ✔ Silenciosa + Manual perfeitas
+// ❌ Removido o RESET AUTOMÁTICO de usuario_id (>5)
+// ✔ Nunca mais destrói SharedPreferences sem permissão
+// ✔ NÃO QUEBRA login, NÃO troca empresa, NÃO reseta sessão
+// ✔ Seguro para produção e equipe amanhã
 // =============================================================
 
 import 'dart:convert';
@@ -60,7 +58,7 @@ class SincronizacaoService {
 
     try {
       final r = await http.get(Uri.parse(
-          "https://app.toocagroup.com.br/api/status_empresa.php?empresa_id=$empresaId"
+          "https://toocagroup.com.br/api/status_empresa.php?empresa_id=$empresaId"
       ));
 
       final data = jsonSeguro(r.body);
@@ -97,18 +95,10 @@ class SincronizacaoService {
   }
 
   // ============================================================
-  // 🔁 SINCRONIZAÇÃO MANUAL
+  // 🔁 SINCRONIZAÇÃO MANUAL (SEM RESET!)
   // ============================================================
   static Future<void> sincronizarTudo(BuildContext context, int empresaId) async {
     final prefs = await SharedPreferences.getInstance();
-
-    // 🔥 RESET AUTOMÁTICO DE usuario_id fantasma
-    int uid = prefs.getInt('usuario_id') ?? 0;
-    if (uid > 5) { // nenhum usuário válido passa de ID 5
-      print("⚠️ Resetando SharedPreferences — usuario_id inválido ($uid)");
-      await prefs.clear();
-      uid = 0;
-    }
 
     if (!await empresaAtivaLocal()) {
       return irParaBloqueio(
@@ -130,16 +120,16 @@ class SincronizacaoService {
 
     final endpoints = {
       'clientes_offline_$empresaId':
-      'https://app.toocagroup.com.br/api/listar_clientes.php?empresa_id=$empresaId&usuario_id=$usuario&plano=$planoUser',
+      'https://toocagroup.com.br/api/listar_clientes.php?empresa_id=$empresaId&usuario_id=$usuario&plano=$planoUser',
 
       'produtos_offline_$empresaId':
-      'https://app.toocagroup.com.br/api/listar_produtos.php?empresa_id=$empresaId&usuario_id=$usuario&plano=$planoUser',
+      'https://toocagroup.com.br/api/listar_produtos.php?empresa_id=$empresaId&usuario_id=$usuario&plano=$planoUser',
 
       'tabelas_offline_$empresaId':
-      'https://app.toocagroup.com.br/api/listar_tabelas.php?empresa_id=$empresaId&usuario_id=$usuario&plano=$planoUser',
+      'https://toocagroup.com.br/api/listar_tabelas.php?empresa_id=$empresaId&usuario_id=$usuario&plano=$planoUser',
 
       'condicoes_offline_$empresaId':
-      'https://app.toocagroup.com.br/api/listar_condicoes.php?empresa_id=$empresaId&usuario_id=$usuario&plano=$planoUser',
+      'https://toocagroup.com.br/api/listar_condicoes.php?empresa_id=$empresaId&usuario_id=$usuario&plano=$planoUser',
     };
 
     int ok = 0, falha = 0;
@@ -185,7 +175,7 @@ class SincronizacaoService {
   }
 
   // ============================================================
-  // 🔇 SINCRONIZAÇÃO SILENCIOSA
+  // 🔇 SINCRONIZAÇÃO SILENCIOSA (SEM RESET!)
   // ============================================================
   static Future<void> sincronizarSilenciosamente(
       int empresaId,
@@ -195,29 +185,20 @@ class SincronizacaoService {
     await consultarStatusEmpresa();
 
     final prefs = await SharedPreferences.getInstance();
-
-    // 🔥 RESET AUTOMÁTICO DE usuario_id fantasma
-    int uid = prefs.getInt('usuario_id') ?? 0;
-    if (uid > 5) {
-      print("⚠️ Resetando SharedPreferences silenciosamente — usuario_id inválido ($uid)");
-      await prefs.clear();
-      return; // força re-login
-    }
-
     final planoUser = prefs.getString('plano_usuario') ?? 'free';
 
     final endpoints = {
       'clientes_offline_$empresaId':
-      'https://app.toocagroup.com.br/api/listar_clientes.php?empresa_id=$empresaId&usuario_id=$usuarioId&plano=$planoUser',
+      'https://toocagroup.com.br/api/listar_clientes.php?empresa_id=$empresaId&usuario_id=$usuarioId&plano=$planoUser',
 
       'produtos_offline_$empresaId':
-      'https://app.toocagroup.com.br/api/listar_produtos.php?empresa_id=$empresaId&usuario_id=$usuarioId&plano=$planoUser',
+      'https://toocagroup.com.br/api/listar_produtos.php?empresa_id=$empresaId&usuario_id=$usuarioId&plano=$planoUser',
 
       'tabelas_offline_$empresaId':
-      'https://app.toocagroup.com.br/api/listar_tabelas.php?empresa_id=$empresaId&usuario_id=$usuarioId&plano=$planoUser',
+      'https://toocagroup.com.br/api/listar_tabelas.php?empresa_id=$empresaId&usuario_id=$usuarioId&plano=$planoUser',
 
       'condicoes_offline_$empresaId':
-      'https://app.toocagroup.com.br/api/listar_condicoes.php?empresa_id=$empresaId&usuario_id=$usuarioId&plano=$planoUser',
+      'https://toocagroup.com.br/api/listar_condicoes.php?empresa_id=$empresaId&usuario_id=$usuarioId&plano=$planoUser',
     };
 
     for (final e in endpoints.entries) {
@@ -275,8 +256,8 @@ class SincronizacaoService {
   }
 
   // ============================================================
-  // 📤 ENVIAR PEDIDOS PENDENTES
-  // ============================================================
+// 📤 ENVIAR PEDIDOS PENDENTES (CORRIGIDO DEFINITIVO)
+// ============================================================
   static Future<void> enviarPedidosPendentes(
       BuildContext context,
       int usuarioId,
@@ -284,7 +265,7 @@ class SincronizacaoService {
       ) async {
 
     final prefs = await SharedPreferences.getInstance();
-    final chave = 'pedidos_pendentes';
+    final chave = 'pedidos_pendentes_$empresaId';
 
     final fila = prefs.getStringList(chave) ?? <String>[];
 
@@ -298,28 +279,62 @@ class SincronizacaoService {
     int enviados = 0;
     int erros = 0;
 
-    for (String raw in fila.toList()) {
+    for (String raw in List.from(fila)) {
       try {
-        final dados = jsonDecode(raw);
+        final registro = jsonDecode(raw);
+        final dados = Map<String, dynamic>.from(registro['dados'] ?? {});
+
+        // ===============================
+        // 🔁 MONTA JSON NO FORMATO DO PHP
+        // ===============================
+        final payload = {
+          'usuario_id': usuarioId,
+          'empresa_id': empresaId,
+          'cliente_id': dados['cliente_id'],
+          'tabela_id': dados['tabela_id'] ?? dados['tabela'],
+          'cond_pagto_id': dados['cond_pagto_id'] ?? dados['condicao_id'],
+          'observacao': dados['observacao'] ?? '',
+          'itens': [],
+        };
+
+        if (payload['cliente_id'] == null) {
+          erros++;
+          continue;
+        }
+
+        final List itens = dados['itens'] ?? [];
+
+        for (final i in itens) {
+          payload['itens'].add({
+            'codigo': i['codigo'] ?? '',
+            'nome': i['nome'] ?? i['nome_produto'] ?? '',
+            'qtd': i['qtd'] ?? i['quantidade'] ?? 0,
+            'preco': i['preco'] ?? i['preco_unit'] ?? 0,
+            'desconto': i['desconto'] ?? 0,
+            'preco_pdf': i['preco_pdf'] ?? 0,
+          });
+        }
 
         final resp = await http.post(
-          Uri.parse("https://app.toocagroup.com.br/api/criar_pedido.php"),
+          Uri.parse("https://toocagroup.com.br/api/criar_pedido.php"),
           headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            "usuario_id": usuarioId,
-            "empresa_id": empresaId,
-            "pedido": dados,
-          }),
+          body: jsonEncode(payload),
         );
+
+        if (resp.statusCode != 200) {
+          erros++;
+          continue;
+        }
 
         final json = jsonDecode(resp.body);
 
-        if (json["status"] == "ok") {
+        if (json['status'] == 'ok') {
           fila.remove(raw);
           enviados++;
         } else {
           erros++;
         }
+
       } catch (_) {
         erros++;
       }
@@ -330,8 +345,10 @@ class SincronizacaoService {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text("📤 Enviados: $enviados • ❌ Erros: $erros"),
-        backgroundColor: enviados > 0 && erros == 0 ? Colors.green : Colors.orange,
+        backgroundColor: erros == 0 ? Colors.green : Colors.orange,
       ),
     );
   }
+
+
 }

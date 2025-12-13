@@ -1,290 +1,317 @@
-// =============================================================
-// 🏠 TOOCA CRM - HOME SCREEN (v8.2 EVA SUPREMA FINAL)
-// -------------------------------------------------------------
-// ✔ NUNCA consulta SaaS automaticamente (somente no Sincronizar)
-// ✔ Bloqueio 100% alinhado com Login + Splash
-// ✔ Usa apenas empresa_status + empresa_expira
-// ✔ Nunca sobrescreve sessão válida com dados antigos
-// ✔ Fluxo estável e sem quedas na TelaBloqueio
-// =============================================================
+import 'dart:convert';
+import 'dart:io';
 
-import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-
-import 'package:app_tooca_crm/screens/sincronizacao_service.dart';
-import 'package:app_tooca_crm/screens/sincronizar_screen.dart';
-import 'package:app_tooca_crm/screens/pedidos_screen.dart';
 import 'package:app_tooca_crm/screens/clientes_screen.dart';
-import 'package:app_tooca_crm/screens/novo_pedido_screen.dart';
-import 'package:app_tooca_crm/screens/login_screen.dart';
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:intl/intl.dart';
 
-import 'TelaBloqueio.dart';
+import 'login_screen.dart';
+import 'pedidos_screen.dart';
+import 'novo_pedido_screen.dart';
+import 'sincronizacao_service.dart';
+import 'cadastrar_cliente_screen.dart';
+import 'pedidos_offline_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final int usuarioId;
-  final int empresaId;
-  final String plano;
+  final int empresaId;          // ✅ MULTIEMPRESA
+  final String plano;           // ✅ free / pro
   final String email;
 
   const HomeScreen({
-    Key? key,
+    super.key,
     required this.usuarioId,
     required this.empresaId,
     required this.plano,
     required this.email,
-  }) : super(key: key);
+  });
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  String nomeUsuario = "";
-  String planoEmpresa = "free";
-  String empresaExpira = "";
+  late String tipoUsuario;
+
+  List<dynamic> ultimosPedidos = [];
+  List<dynamic> pedidosRascunho = [];
+  double totalMes = 0.0;
+  bool carregandoPedidos = true;
+
+  // ---------------- HELPERS ----------------
+  final NumberFormat _moeda =
+  NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+
+  String formatMoeda(num v) => _moeda.format(v);
+
+  double parseValorHibridoDart(dynamic valor) {
+    if (valor == null) return 0.0;
+    if (valor is num) return valor.toDouble();
+    var s = valor.toString().trim();
+    if (s.isEmpty) return 0.0;
+
+    s = s.replaceAll(RegExp(r'[^\d.,-]'), '');
+
+    if (s.contains(',') && s.contains('.')) {
+      s = s.replaceAll('.', '');
+      s = s.replaceAll(',', '.');
+    } else if (s.contains(',')) {
+      s = s.replaceAll('.', '');
+      s = s.replaceAll(',', '.');
+    }
+    return double.tryParse(s) ?? 0.0;
+  }
+  // -----------------------------------------
 
   @override
   void initState() {
     super.initState();
-    carregarSessao();
-  }
+    tipoUsuario = widget.plano;
 
-  // =============================================================
-  // 🔍 CARREGAR DADOS DA SESSÃO (SEM CONSULTAR NADA)
-  // =============================================================
-  Future<void> carregarSessao() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    nomeUsuario = prefs.getString("nome") ?? "";
-    planoEmpresa = prefs.getString("plano_empresa") ?? "free";
-    empresaExpira = prefs.getString("data_expiracao") ?? "";
-
-
-    debugPrint(
-        "🏠 HOME v8.2 Sessão carregada → "
-            "user=${widget.usuarioId} | empresa=${widget.empresaId} | plano=$planoEmpresa | expira=$empresaExpira"
-    );
-
-    setState(() {});
-  }
-
-  // =============================================================
-  // ✔ VALIDAÇÃO OFICIAL (SEM RECONSULTAR SAAS)
-  // =============================================================
-  Future<bool> validarEmpresa() async {
-    final ativa = await SincronizacaoService.empresaAtivaLocal();
-    if (!ativa) {
-      _bloquear();
-      return false;
+    if (tipoUsuario == 'free') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('🔒 Alguns recursos são exclusivos para usuários PRO'),
+          ),
+        );
+      });
     }
-    return true;
+
+    // ✅ TUDO QUE ENVOLVE HTTP / OFFLINE DEPOIS DO PRIMEIRO FRAME
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await SincronizacaoService.sincronizarSilenciosamente(
+        widget.empresaId,
+        widget.usuarioId,
+      );
+
+      await SincronizacaoService.enviarPedidosPendentes(
+        context,
+        widget.usuarioId,
+        widget.empresaId,
+      );
+    });
+
+    carregarUltimosPedidos();
   }
 
-  // =============================================================
-  // 🚫 IR PARA TELA DE BLOQUEIO (GLOBAL)
-  // =============================================================
-  void _bloquear() {
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (_) => TelaBloqueio(
-          planoEmpresa: planoEmpresa,
-          empresaExpira: empresaExpira,
+
+  Future<void> carregarUltimosPedidos() async {
+    final url = Uri.parse(
+        'https://toocagroup.com.br/api/listar_pedidos_faturados.php');
+
+    final cachePedidos = 'pedidos_faturados_${widget.empresaId}';
+    final cacheRascunhos = 'pedidos_rascunho_${widget.empresaId}';
+
+    try {
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'usuario_id': widget.usuarioId,
+          'empresa_id': widget.empresaId, // ✅ ISOLAMENTO
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(cachePedidos, jsonEncode(data['pedidos'] ?? []));
+        await prefs.setString(
+            cacheRascunhos, jsonEncode(data['rascunhos'] ?? []));
+
+        if (!mounted) return;
+        setState(() {
+          ultimosPedidos = data['pedidos'] ?? [];
+          pedidosRascunho = data['rascunhos'] ?? [];
+          totalMes = parseValorHibridoDart(data['total_mes']);
+          carregandoPedidos = false;
+        });
+      }
+    } on SocketException {
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
+
+      setState(() {
+        ultimosPedidos =
+            jsonDecode(prefs.getString(cachePedidos) ?? '[]');
+        pedidosRascunho =
+            jsonDecode(prefs.getString(cacheRascunhos) ?? '[]');
+        carregandoPedidos = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('📴 Sem conexão. Exibindo dados offline.'),
+          backgroundColor: Colors.orange,
         ),
-      ),
-    );
+      );
+    } catch (e) {
+      carregandoPedidos = false;
+      debugPrint('❌ Erro HomeScreen: $e');
+    }
   }
 
-  // =============================================================
-  // 🚪 SAIR DO APP
-  // =============================================================
-  Future<void> sair() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
-
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(builder: (_) => const LoginScreen()),
-          (_) => false,
-    );
-  }
-
-  // =============================================================
-  // 🖥️ UI / MENU
-  // =============================================================
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F5),
-
-      appBar: AppBar(
-        backgroundColor: const Color(0xFFFFC107),
-        foregroundColor: Colors.black,
-        title: const Text(
-          'Tooca CRM',
-          style: TextStyle(fontWeight: FontWeight.bold),
+    final List<Map<String, dynamic>> menu = [
+      {
+        'icon': Icons.add_box,
+        'label': 'Novo Pedido',
+        'route': () => NovoPedidoScreen(
+          usuarioId: widget.usuarioId,
+          empresaId: widget.empresaId,
+          plano: widget.plano,
         ),
+      },
+      {
+        'icon': Icons.list_alt,
+        'label': 'Pedidos',
+        'route': () => PedidosScreen(
+          usuarioId: widget.usuarioId,
+          empresaId: widget.empresaId,
+          plano: widget.plano,
+        ),
+      },
+      {
+        'icon': Icons.drafts,
+        'label': 'Rascunhos',
+        'route': () => PedidosOfflineScreen(
+          usuarioId: widget.usuarioId,
+          empresaId: widget.empresaId,
+        ),
+      },
+      {
+        'icon': Icons.person_add,
+        'label': 'Clientes',
+        'route': () => ClientesScreen(
+          usuarioId: widget.usuarioId,
+          empresaId: widget.empresaId,
+          plano: widget.plano, // 🔥 ESSENCIAL
+        ),
+      },
+
+    ];
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Tooca CRM'),
+        backgroundColor: const Color(0xFFFFCC00),
+        foregroundColor: Colors.black,
         actions: [
-          IconButton(icon: const Icon(Icons.logout), onPressed: sair),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.clear();
+              Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (_) => const LoginScreen()),
+                    (_) => false,
+              );
+            },
+          ),
         ],
       ),
-
-      body: Padding(
-        padding: const EdgeInsets.all(24),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              "👋 Olá, $nomeUsuario",
-              style: const TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-
-            const SizedBox(height: 30),
-
-            Expanded(
-              child: GridView.count(
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: menu.length,
+              gridDelegate:
+              const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 2,
-                mainAxisSpacing: 16,
-                crossAxisSpacing: 16,
-                children: [
-                  // =============================================================
-                  // 🟡 NOVO PEDIDO
-                  // =============================================================
-                  _buildCard(
-                    icon: Icons.note_add_outlined,
-                    label: "Novo Pedido",
-                    onTap: () async {
-                      if (!await validarEmpresa()) return;
-
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => NovoPedidoScreen(
-                            usuarioId: widget.usuarioId,
-                            empresaId: widget.empresaId,
-                            plano: planoEmpresa,
-                          ),
-                        ),
-                      );
-                    },
+                crossAxisSpacing: 20,
+                mainAxisSpacing: 20,
+              ),
+              itemBuilder: (_, i) => GestureDetector(
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => menu[i]['route']()),
+                ),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 6,
+                        offset: const Offset(2, 2),
+                      ),
+                    ],
                   ),
-
-                  // =============================================================
-                  // 🧾 PEDIDOS
-                  // =============================================================
-                  _buildCard(
-                    icon: Icons.receipt_long,
-                    label: "Pedidos",
-                    onTap: () async {
-                      if (!await validarEmpresa()) return;
-
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => PedidosScreen(
-                            usuarioId: widget.usuarioId,
-                            empresaId: widget.empresaId,
-                            plano: planoEmpresa,
-                          ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(menu[i]['icon'],
+                          size: 48, color: const Color(0xFFFFCC00)),
+                      const SizedBox(height: 10),
+                      Text(
+                        menu[i]['label'],
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
                         ),
-                      );
-                    },
+                      )
+                    ],
                   ),
-
-                  // =============================================================
-                  // 👥 CLIENTES
-                  // =============================================================
-                  _buildCard(
-                    icon: Icons.people_outline,
-                    label: "Clientes",
-                    onTap: () async {
-                      if (!await validarEmpresa()) return;
-
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => ClientesScreen(
-                            usuarioId: widget.usuarioId,
-                            empresaId: widget.empresaId,
-                            plano: planoEmpresa,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-
-                  // =============================================================
-                  // 🔄 SINCRONIZAR
-                  // =============================================================
-                  _buildCard(
-                    icon: Icons.sync,
-                    label: "Sincronizar",
-                    onTap: () async {
-                      if (!await validarEmpresa()) return;
-
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => SincronizarScreen(
-                            usuarioId: widget.usuarioId,
-                            empresaId: widget.empresaId,
-                            plano: planoEmpresa,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ],
+                ),
               ),
             ),
+            const SizedBox(height: 30),
+            if (!carregandoPedidos)
+              Center(
+                child: Column(
+                  children: [
+                    const Text(
+                      '📦 Total Faturado no Mês',
+                      style:
+                      TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      formatMoeda(totalMes),
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.green,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
           ],
         ),
       ),
-    );
-  }
+      floatingActionButton: FloatingActionButton.extended(
+        backgroundColor: const Color(0xFFFFCC00),
+        foregroundColor: Colors.black,
+        icon: const Icon(Icons.sync),
+        label: const Text('Sincronizar'),
+        onPressed: () async {
+          await SincronizacaoService.sincronizarSilenciosamente(
+            widget.empresaId,
+            widget.usuarioId,
+          );
 
-  // =============================================================
-  // 💛 CARD DO MENU
-  // =============================================================
-  Widget _buildCard({
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(16),
-      child: Ink(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.08),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, color: Colors.amber[800], size: 48),
-              const SizedBox(height: 8),
-              Text(
-                label,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black87,
-                ),
-              ),
-            ],
-          ),
-        ),
+          await SincronizacaoService.enviarPedidosPendentes(
+            context,
+            widget.usuarioId,
+            widget.empresaId,
+          );
+
+          await carregarUltimosPedidos();
+        },
+
       ),
     );
   }

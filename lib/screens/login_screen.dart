@@ -1,11 +1,12 @@
 // =============================================================
-// 🔐 TOOCA CRM - LOGIN SCREEN (v8.4 EVA SUPREMA FINAL)
+// 🔐 TOOCA CRM - LOGIN SCREEN (v9.0 EVA SUPREMA FINAL)
 // -------------------------------------------------------------
-// ✔ Bloqueio somente aqui
-// ✔ Impede usuario fantasma (ex: id 9)
-// ✔ Valida usuario_id retornado pela API
-// ✔ SharedPreferences 100% limpo antes de salvar
-// ✔ Compatível com Sincronização v8.4
+// ✔ Banco 100% fixado no toocagroup.com.br
+// ✔ Impede mistura com bancos antigos (app.tooca, etc.)
+// ✔ Limpa e recria sessão de forma segura
+// ✔ Mantém todas as chaves usadas pelo app atual
+// ✔ Fluxo de bloqueio + expiração intacto
+// ✔ Compatível com Splash, Home, Pedidos, Sincronização, EVA
 // =============================================================
 
 import 'dart:convert';
@@ -44,7 +45,10 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => carregando = true);
 
     try {
-      final url = Uri.parse('https://app.toocagroup.com.br/api/login.php');
+      // ==========================================================
+      // 🌐 API FIXADA DEFINITIVA
+      // ==========================================================
+      final url = Uri.parse('https://toocagroup.com.br/api/login.php');
 
       final response = await http.post(
         url,
@@ -73,16 +77,17 @@ class _LoginScreenState extends State<LoginScreen> {
       final int usuarioId = data['usuario_id'] ?? 0;
       final int empresaId = data['empresa_id'] ?? 0;
       final nomeUser = data['nome'] ?? "Usuário";
-      final planoUser = data['plano_usuario'] ?? "free";
 
+      final planoUser = data['plano_usuario'] ?? "free";
       final planoEmpresa = data['plano_empresa'] ?? "free";
+
       final empresaStatus = data['empresa_status'] ?? "ativo";
       final expiraEmpresa = _normalizarData(data['data_expiracao'] ?? "");
 
       // ==========================================================
       // 🚫 BLOQUEIO DE USUÁRIO INVÁLIDO
       // ==========================================================
-      if (usuarioId <= 0 || usuarioId > 5) {
+      if (usuarioId <= 0) {
         _msg("❌ Usuário inválido. Contate o suporte.");
         setState(() => carregando = false);
         return;
@@ -91,15 +96,7 @@ class _LoginScreenState extends State<LoginScreen> {
       // ==========================================================
       // 🛡️ BLOQUEIO POR PLANO / EXPIRAÇÃO
       // ==========================================================
-      if (empresaStatus != "ativo") {
-        _irPara(TelaBloqueio(
-          planoEmpresa: planoEmpresa,
-          empresaExpira: expiraEmpresa,
-        ));
-        return;
-      }
-
-      if (!_empresaAtiva(expiraEmpresa)) {
+      if (empresaStatus != "ativo" || !_empresaAtiva(expiraEmpresa)) {
         _irPara(TelaBloqueio(
           planoEmpresa: planoEmpresa,
           empresaExpira: expiraEmpresa,
@@ -115,7 +112,7 @@ class _LoginScreenState extends State<LoginScreen> {
       await prefs.reload();
 
       // ==========================================================
-      // 💾 SALVAR SESSÃO COM ID CORRETO
+      // 💾 SALVAR SESSÃO (100% COMPATÍVEL COM O APP ATUAL)
       // ==========================================================
       await prefs.setInt('usuario_id', usuarioId);
       await prefs.setInt('empresa_id', empresaId);
@@ -125,6 +122,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
       await prefs.setString('plano_usuario', planoUser);
       await prefs.setString('plano_empresa', planoEmpresa);
+      await prefs.setString('tipo_usuario', data['tipo'] ?? 'vendedor');
+      await prefs.setBool('is_master', data['is_master'] == 1);
+
 
       await prefs.setString('empresa_status', empresaStatus);
       await prefs.setString('empresa_expira', expiraEmpresa);
@@ -195,16 +195,13 @@ class _LoginScreenState extends State<LoginScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
           child: Column(
             children: [
-
-
               const Text(
-                'Tooca Crm ',
+                'Tooca CRM',
                 style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
               ),
 
               const SizedBox(height: 40),
 
-              // EMAIL
               TextField(
                 controller: emailCtrl,
                 decoration: _campoDeco(
@@ -215,7 +212,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const SizedBox(height: 16),
 
-              // SENHA
               TextField(
                 controller: senhaCtrl,
                 obscureText: !mostrarSenha,
@@ -224,7 +220,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   icon: Icons.lock_outline,
                   suffix: IconButton(
                     icon: Icon(
-                        mostrarSenha ? Icons.visibility_off : Icons.visibility),
+                      mostrarSenha ? Icons.visibility_off : Icons.visibility,
+                    ),
                     onPressed: () =>
                         setState(() => mostrarSenha = !mostrarSenha),
                   ),
@@ -233,7 +230,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const SizedBox(height: 28),
 
-              // LOGIN BUTTON
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
@@ -264,7 +260,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 '© Tooca Group 2025',
                 style: TextStyle(color: Colors.black54, fontSize: 13),
               ),
-
             ],
           ),
         ),

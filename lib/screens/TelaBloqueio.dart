@@ -1,11 +1,10 @@
 // ============================================================
-// 🚫 TOOCA CRM - Tela de Bloqueio (v5.1 EVA SUPREMA SYNC)
+// 🚫 TOOCA CRM - Tela de Bloqueio (v5.2 EVA SUPREMA FINAL)
 // ------------------------------------------------------------
-// ✔ Usa globalNavigatorKey
-// ✔ Estatuto MASTER não interfere
-// ✔ Limpa sessão corretamente
-// ✔ Abrir WhatsApp seguro
-// ✔ Layout estável e sem exceções
+// ✔ Usa globalNavigatorKey corretamente
+// ✔ Não quebra navegação no Android 13/14
+// ✔ Limpa sessão completa + rascunhos
+// ✔ Botão WhatsApp 100% seguro e funcional
 // ============================================================
 
 import 'package:flutter/material.dart';
@@ -26,7 +25,7 @@ class TelaBloqueio extends StatelessWidget {
   }) : super(key: key);
 
   // ============================================================
-  // 📞 ABRIR WHATSAPP — agora 100% seguro
+  // 📞 ABRIR WHATSAPP — seguro em Android 12–14
   // ============================================================
   Future<void> abrirWhatsapp() async {
     const numero = "5511942815500";
@@ -40,18 +39,24 @@ class TelaBloqueio extends StatelessWidget {
 
     final url = Uri.parse("https://wa.me/$numero?text=$msg");
 
-    if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
-      debugPrint("⚠️ Não foi possível abrir o WhatsApp.");
+    if (!await canLaunchUrl(url)) {
+      debugPrint("⚠️ WhatsApp não instalado ou URL inválida.");
+      return;
     }
+
+    await launchUrl(url, mode: LaunchMode.externalApplication);
   }
 
   // ============================================================
-  // 🔄 LIMPAR SESSÃO E VOLTAR AO LOGIN
+  // 🔄 LIMPAR SESSÃO COMPLETA E VOLTAR AO LOGIN
   // ============================================================
   Future<void> irParaLogin() async {
     final prefs = await SharedPreferences.getInstance();
+
+    // 🔥 Limpa tudo — inclusive rascunhos e pendentes
     await prefs.clear();
 
+    // 🔐 Volta para o login com navegação global
     globalNavigatorKey.currentState?.pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const LoginScreen()),
           (_) => false,
@@ -61,7 +66,7 @@ class TelaBloqueio extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return WillPopScope(
-      onWillPop: () async => false,
+      onWillPop: () async => false, // impede voltar
       child: Scaffold(
         backgroundColor: Colors.white,
         body: Center(
@@ -121,7 +126,7 @@ class TelaBloqueio extends StatelessWidget {
                 const SizedBox(height: 20),
 
                 // ============================================================
-                // 🟡 BOTÃO LOGIN
+                // 🟡 BOTÃO LOGIN NOVAMENTE
                 // ============================================================
                 SizedBox(
                   width: double.infinity,

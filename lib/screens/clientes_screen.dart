@@ -9,7 +9,7 @@
 // ✔ IDs reais do SharedPreferences
 // ✔ UI moderna padrão Tooca
 // ✔ Sincronização silenciosa automática
-// ✔ Compatível com listar_clientes.php e excluir_cliente.php
+// ✔ Compatível com listar_clientes.php e listar_excluir_cliente.php
 // ✔ 100% offline funcional
 // =============================================================
 
@@ -91,7 +91,7 @@ class _ClientesScreenState extends State<ClientesScreen> {
 
     try {
       final url = Uri.parse(
-        'https://app.toocagroup.com.br/api/listar_clientes.php?empresa_id=$empresaId&plano=${widget.plano}',
+        'https://toocagroup.com.br/api/listar_clientes.php?empresa_id=$empresaId&plano=${widget.plano}',
       );
 
       debugPrint("🌍 GET CLIENTES → $url");
@@ -275,10 +275,7 @@ class _ClientesScreenState extends State<ClientesScreen> {
         backgroundColor: const Color(0xFFFFC107),
         foregroundColor: Colors.black,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: carregarClientes,
-          )
+
         ],
       ),
 

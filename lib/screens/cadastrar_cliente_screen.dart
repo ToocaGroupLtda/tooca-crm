@@ -149,8 +149,9 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
 
     return lista.any((c) {
       final mesmoCnpj = c['cnpj']?.toString() == cnpj;
-      final mesmoNome =
-          c['nome']?.toString().trim().toLowerCase() == nome.toLowerCase();
+      final nomeBanco = (c['fantasia'] ?? c['nome'] ?? '').toString().trim().toLowerCase();
+      final mesmoNome = nomeBanco == nome.toLowerCase();
+
 
       // Se for edição, ignora o próprio cliente
       if (widget.cliente != null && c['id'] == widget.cliente!['id']) {
@@ -168,7 +169,7 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
     final nome = fantasiaCtrl.text.isNotEmpty
         ? fantasiaCtrl.text.trim()
         : razaoCtrl.text.trim();
-    final cnpj = cnpjCtrl.text.trim();
+    final cnpj = cnpjCtrl.text.replaceAll(RegExp(r'[^0-9]'), '');
 
     if (nome.isEmpty) {
       ScaffoldMessenger.of(context)
@@ -191,7 +192,7 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
 
     try {
       final url = Uri.parse(
-        'https://app.toocagroup.com.br/api/listar_salvar_cliente.php',
+        'https://toocagroup.com.br/api/listar_salvar_cliente.php',
       );
 
       final body = jsonEncode({
@@ -295,20 +296,30 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
   Future<void> excluirCliente() async {
     if (widget.cliente == null) return;
 
+    final nomeCliente = widget.cliente!['nome'] ?? "Cliente";
+
+    // 🔔 CONFIRMAÇÃO
     final confirma = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text("Excluir Cliente"),
         content: Text(
-            "Tem certeza que deseja excluir o cliente:\n\n${widget.cliente!['nome']} ?"),
+          "Você deseja realmente excluir o cliente:\n\n$nomeCliente ?",
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text("Cancelar")),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("Cancelar"),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text("Excluir",
-                style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+            child: const Text(
+              "Excluir",
+              style: TextStyle(
+                color: Colors.red,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ),
         ],
       ),
@@ -317,22 +328,18 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
     if (confirma != true) return;
 
     try {
-      // 🔥 Correção oficial do erro "String is not a subtype of int"
       final int idCorrigido =
           int.tryParse(widget.cliente!['id'].toString()) ?? 0;
-
       final int empresaCorrigido =
           int.tryParse(widget.empresaId.toString()) ?? 0;
 
-      print("ID corrigido = $idCorrigido");
-      print("Empresa corrigido = $empresaCorrigido");
-
       final resp = await http.post(
-        Uri.parse("https://app.toocagroup.com.br/api/excluir_cliente.php"),
-        body: {
-          "id": idCorrigido.toString(),
-          "empresa_id": empresaCorrigido.toString(),
-        },
+        Uri.parse("https://toocagroup.com.br/api/listar_excluir_cliente.php"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "id": idCorrigido,
+          "empresa_id": empresaCorrigido,
+        }),
       );
 
       final data = jsonDecode(resp.body);
@@ -340,13 +347,25 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
       if (data['status'] == 'ok') {
         await _removerOffline(idCorrigido);
 
+        // 🎉 AVISO DE SUCESSO
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Cliente $nomeCliente excluído do banco."),
+            backgroundColor: Colors.green,
+          ),
+        );
+
         Navigator.pop(context, true);
       } else {
-        throw Exception("Erro API");
+        throw Exception(data['mensagem'] ?? "Erro ao excluir");
       }
     } catch (e) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text("Erro: $e")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Erro ao excluir: $e"),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
