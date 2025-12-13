@@ -1266,19 +1266,6 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
 
-              // =======================
-              // BUSCA PRODUTO (FIXA)
-              // =======================
-              TextField(
-                controller: buscaCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Buscar Produto para Adicionar',
-                  suffixIcon: Icon(Icons.search),
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(vertical: 8, horizontal: 10),
-                ),
-                onChanged: (_) => setState(() {}),
-              ),
 
               const SizedBox(height: 8),
 
@@ -1300,6 +1287,32 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+// =======================================================
+// 🟨 HEADER FIXO — ITENS NO PEDIDO (PEQUENO)
+// =======================================================
+  SliverPersistentHeader _buildItensHeaderFixo() {
+    const double h = 28.0;
+
+    return SliverPersistentHeader(
+      pinned: true,
+      delegate: _SliverAppBarDelegate(
+        minHeight: h,
+        maxHeight: h,
+        child: Container(
+          alignment: Alignment.center,
+          color: const Color(0xFFFFCC00),
+          child: const Text(
+            'ITENS NO PEDIDO',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.black,
+            ),
           ),
         ),
       ),
@@ -1330,150 +1343,182 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
           backgroundColor: const Color(0xFFFFCC00),
           foregroundColor: Colors.black,
         ),
+        // ==========================================================
+        // 🔥 CORREÇÃO APLICADA AQUI
+        // ==========================================================
         body: Column(
           children: [
+
+            // ==================================================
+            // 🔒 1. TOPO FIXO — NÃO ROLA EM HIPÓTESE NENHUMA
+            //    (Removido de dentro do CustomScrollView)
+            // ==================================================
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+
+                  // =======================
+                  // 🟨 CARD CLIENTE (DESTAQUE)
+                  // =======================
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.05),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+
+                        Row(
+                          children: const [
+                            Icon(Icons.person, color: Colors.black54),
+                            SizedBox(width: 6),
+                            Text(
+                              'CLIENTE',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 8),
+
+                        TextField(
+                          controller: clienteBuscaCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Buscar cliente por nome ou CNPJ',
+                            prefixIcon: Icon(Icons.search),
+                            filled: true,
+                            fillColor: Color(0xFFF7F7F7),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.all(Radius.circular(8)),
+                            ),
+                            isDense: true,
+                          ),
+                          onChanged: buscarClientesOffline,
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  // =======================
+                  // TABELA + CONDIÇÃO
+                  // =======================
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          value: _tabelaSelecionada,
+                          decoration: const InputDecoration(
+                            labelText: 'Tabela de Preço',
+                            isDense: true,
+                          ),
+                          items: tabelas.map((t) {
+                            return DropdownMenuItem(
+                              value: '${t['id']}',
+                              child: Text('${t['nome']}'),
+                            );
+                          }).toList(),
+                          onChanged: (v) {
+                            setState(() {
+                              _tabelaSelecionada = v;
+                              tabelaId = int.tryParse(v ?? '');
+                            });
+                            if (tabelaId != null) {
+                              recalcPrecosItensPorTabela(tabelaId);
+                            }
+                            salvarRascunho();
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: DropdownButtonFormField<int>(
+                          value: condicoes.any((c) => int.tryParse('${c['id']}') == condicaoId)
+                              ? condicaoId
+                              : null,
+                          decoration: const InputDecoration(
+                            labelText: 'Condição',
+                            isDense: true,
+                          ),
+                          items: condicoes.map((c) {
+                            return DropdownMenuItem(
+                              value: int.tryParse('${c['id']}'),
+                              child: Text(c['nome'] ?? '---'),
+                            );
+                          }).toList(),
+                          onChanged: (v) {
+                            if (v != null) {
+                              setState(() => condicaoId = v);
+                              salvarRascunho();
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 8),
+
+                  // OBSERVAÇÃO
+                  TextField(
+                    controller: obsCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Observação (opcional)',
+                      isDense: true,
+                    ),
+                    onChanged: (_) => salvarRascunho(),
+                  ),
+
+                  const SizedBox(height: 8),
+
+// =======================
+// 🔍 BUSCA DE PRODUTO
+// =======================
+                  TextField(
+                    controller: buscaCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Buscar Produto para Adicionar',
+                      prefixIcon: Icon(Icons.search),
+                      filled: true,
+                      fillColor: Color(0xFFF7F7F7),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.all(Radius.circular(8)),
+                      ),
+                      isDense: true,
+                    ),
+                    onChanged: (_) => setState(() {}),
+                  ),
+
+                ],
+              ),
+            ),
+
+
+
+            // ==================================================
+            // 🔽 2. SOMENTE ESTE BLOCO ROLA (CUSTOMSCROLLVIEW)
+            // ==================================================
             Expanded(
               child: CustomScrollView(
                 slivers: [
 
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
 
-                          // =======================
-                          // 🟨 CARD CLIENTE (DESTAQUE)
-                          // =======================
-                          Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(10),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.05),
-                                  blurRadius: 4,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-
-                                Row(
-                                  children: const [
-                                    Icon(Icons.person, color: Colors.black54),
-                                    SizedBox(width: 6),
-                                    Text(
-                                      'CLIENTE',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 14,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-
-                                const SizedBox(height: 8),
-
-                                TextField(
-                                  controller: clienteBuscaCtrl,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Buscar cliente por nome ou CNPJ',
-                                    prefixIcon: Icon(Icons.search),
-                                    filled: true,
-                                    fillColor: Color(0xFFF7F7F7),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.all(Radius.circular(8)),
-                                    ),
-                                    isDense: true,
-                                  ),
-                                  onChanged: buscarClientesOffline,
-                                ),
-                              ],
-                            ),
-                          ),
-
-                          const SizedBox(height: 12),
-
-                          // =======================
-                          // TABELA + CONDIÇÃO
-                          // =======================
-                          Row(
-                            children: [
-                              Expanded(
-                                child: DropdownButtonFormField<String>(
-                                  value: _tabelaSelecionada,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Tabela de Preço',
-                                    isDense: true,
-                                  ),
-                                  items: tabelas.map((t) {
-                                    return DropdownMenuItem(
-                                      value: '${t['id']}',
-                                      child: Text('${t['nome']}'),
-                                    );
-                                  }).toList(),
-                                  onChanged: (v) {
-                                    setState(() {
-                                      _tabelaSelecionada = v;
-                                      tabelaId = int.tryParse(v ?? '');
-                                    });
-                                    if (tabelaId != null) {
-                                      recalcPrecosItensPorTabela(tabelaId);
-                                    }
-                                    salvarRascunho();
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: DropdownButtonFormField<int>(
-                                  value: condicoes.any((c) => int.tryParse('${c['id']}') == condicaoId)
-                                      ? condicaoId
-                                      : null,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Condição',
-                                    isDense: true,
-                                  ),
-                                  items: condicoes.map((c) {
-                                    return DropdownMenuItem(
-                                      value: int.tryParse('${c['id']}'),
-                                      child: Text(c['nome'] ?? '---'),
-                                    );
-                                  }).toList(),
-                                  onChanged: (v) {
-                                    if (v != null) {
-                                      setState(() => condicaoId = v);
-                                      salvarRascunho();
-                                    }
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
-
-                          const SizedBox(height: 8),
-
-                          // OBSERVAÇÃO
-                          TextField(
-                            controller: obsCtrl,
-                            decoration: const InputDecoration(
-                              labelText: 'Observação (opcional)',
-                              isDense: true,
-                            ),
-                            onChanged: (_) => salvarRascunho(),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-
-                  // 2️⃣ SUGESTÕES DE CLIENTES (rolam com o conteúdo do cliente)
+                  // 2️⃣ SUGESTÕES DE CLIENTES
                   if (sugestoesClientes.isNotEmpty)
                     SliverList(
                       delegate: SliverChildListDelegate(
@@ -1500,7 +1545,7 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
                       ),
                     ),
 
-                  // 3️⃣ SUGESTÕES DE PRODUTOS (rolam com a busca)
+                  // 3️⃣ SUGESTÕES DE PRODUTOS
                   if (produtosFiltrados.isNotEmpty)
                     SliverList(
                       delegate: SliverChildListDelegate(
@@ -1586,8 +1631,22 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
                       ),
                     ),
 
-                  // 4️⃣ HEADER FIXO (BUSCA PRODUTO + TÍTULO ITENS)
-                  _buildPersistentHeader(),
+
+
+// =======================
+// 📌 HEADER FIXO — ITENS NO PEDIDO
+// 👉 SÓ APARECE QUANDO NÃO HÁ BUSCA ATIVA
+// =======================
+                  if (itens.isNotEmpty && produtosFiltrados.isEmpty)
+                    _buildItensHeaderFixo(),
+
+// 🧱 COMPENSA ALTURA DO HEADER FIXO
+                  if (itens.isNotEmpty && produtosFiltrados.isEmpty)
+                    const SliverToBoxAdapter(
+                      child: SizedBox(height: 28), // mesma altura do header
+                    ),
+
+
 
                   // 5️⃣ LISTA DE ITENS DO PEDIDO (rola abaixo do header)
                   SliverList(
@@ -1694,9 +1753,9 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
               ),
             ),
 
-            // =======================
-            // RODAPÉ FIXO — CLEAN FINAL (BAIXO)
-            // =======================
+            // ==================================================
+            // 🔒 3. RODAPÉ FIXO — CLEAN FINAL (BAIXO)
+            // ==================================================
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
