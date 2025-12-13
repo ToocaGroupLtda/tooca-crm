@@ -1234,6 +1234,78 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
     return (d % 1 == 0) ? d.toInt().toString() : d.toString();
   }
 
+// =================================================================
+// 🆕 CLASSE PARA O CABEÇALHO FIXO
+// =================================================================
+  SliverPersistentHeader _buildPersistentHeader() {
+
+    // Altura Fixa: 120.0
+    const double fixedHeight = 120.0;
+
+    return SliverPersistentHeader(
+      pinned: true,
+      delegate: _SliverAppBarDelegate(
+        minHeight: fixedHeight,
+        maxHeight: fixedHeight, // 🔥 FIX: min e max iguais
+        child: Container(
+          // 🔥 CONTAINER INTERNO COM ALTURA EXATA
+          height: fixedHeight,
+          // 🔥 FUNDO SÓLIDO e elevation para UX
+          decoration: BoxDecoration(
+            color: const Color(0xFFF5F5F5),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.grey.withOpacity(0.3),
+                blurRadius: 2.0,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+
+              // =======================
+              // BUSCA PRODUTO (FIXA)
+              // =======================
+              TextField(
+                controller: buscaCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Buscar Produto para Adicionar',
+                  suffixIcon: Icon(Icons.search),
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+
+              const SizedBox(height: 8),
+
+              // =======================
+              // TÍTULO DA LISTA DE ITENS (FIXO)
+              // =======================
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                color: const Color(0xFFFFCC00),
+                child: const Text(
+                  "ITENS DO PEDIDO",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (carregando) {
@@ -1242,512 +1314,586 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
       );
     }
 
-
     final produtosFiltrados = produtos.where((p) {
       final termo = buscaCtrl.text.toLowerCase();
       return termo.isNotEmpty &&
           (p['nome'].toString().toLowerCase().contains(termo) ||
               p['codigo'].toString().contains(termo));
-    }).take(50).toList(); // 🚀 LIMITA A 50 RESULTADOS
+    }).take(50).toList();
 
     return WillPopScope(
       onWillPop: confirmarSaida,
       child: Scaffold(
-          backgroundColor: const Color(0xFFF5F5F5),
-          appBar: AppBar(
-            title: Text(widget.pedidoId == null ? 'Novo Pedido' : 'Editar Pedido'),
-            backgroundColor: const Color(0xFFFFCC00),
-            foregroundColor: Colors.black,
-          ),
-          body: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              children: [
-                Expanded(
-                  child: SingleChildScrollView(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
+        backgroundColor: const Color(0xFFF5F5F5),
+        appBar: AppBar(
+          title: Text(widget.pedidoId == null ? 'Novo Pedido' : 'Editar Pedido'),
+          backgroundColor: const Color(0xFFFFCC00),
+          foregroundColor: Colors.black,
+        ),
+        body: Column(
+          children: [
+            Expanded(
+              child: CustomScrollView(
+                slivers: [
 
-                        // =======================
-                        // BUSCA CLIENTE
-                        // =======================
-                        TextField(
-                          controller: clienteBuscaCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'Buscar Cliente por Nome ou CNPJ',
-                            suffixIcon: Icon(Icons.search),
-                          ),
-                          onChanged: buscarClientesOffline,
-                        ),
-
-                        if (sugestoesClientes.isNotEmpty)
-                          ListView.builder(
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
-                            itemCount: sugestoesClientes.length,
-                            itemBuilder: (context, index) {
-                              final cliente = sugestoesClientes[index];
-                              return ListTile(
-                                title: Text("${cliente['cnpj']} • ${cliente['nome']}"),
-                                onTap: () {
-                                  setState(() {
-                                    clienteId = int.tryParse(cliente['id'].toString());
-                                    clienteBuscaCtrl.text = cliente['nome'] ?? '';
-                                    sugestoesClientes.clear();
-                                  });
-                                  salvarRascunho();
-                                },
-                              );
-                            },
-                          ),
-
-                        // =======================
-                        // TABELA DE PREÇO
-                        // =======================
-                        DropdownButtonFormField<String>(
-                          value: _tabelaSelecionada,
-                          decoration: const InputDecoration(labelText: 'Tabela de Preço'),
-                          items: [
-                            ...tabelas.map((t) {
-                              final idStr = '${t['id']}';
-                              return DropdownMenuItem(
-                                value: idStr,
-                                child: Text('${t['nome']}'),
-                              );
-                            }).toList(),
-                          ],
-                          onChanged: (value) {
-                            setState(() {
-                              _tabelaSelecionada = value;         // sempre string
-                              tabelaId = int.tryParse(value ?? '') ?? null;
-                            });
-
-                            // recalcula só se for tabela numérica
-                            if (tabelaId != null) {
-                              recalcPrecosItensPorTabela(tabelaId);
-                            }
-
-                            salvarRascunho();
-                          },
-
-                        ),
-
-                        const SizedBox(height: 10),
-
-                        // =======================
-                        // CONDIÇÃO DE PAGAMENTO
-                        // =======================
-                        DropdownButtonFormField<int>(
-                          value: condicoes.any((c) => int.tryParse('${c['id']}') == condicaoId)
-                              ? condicaoId
-                              : null,
-                          decoration: const InputDecoration(labelText: 'Condição de Pagamento'),
-                          items: condicoes.map((c) {
-                            final id = int.tryParse('${c['id']}') ?? 0;
-                            final nome = c['nome'] ?? '---';
-
-                            return DropdownMenuItem<int>(
-                              value: id,
-                              child: Text(nome),  // SOMENTE 1 COLUNA
-                            );
-                          }).toList(),
-                          onChanged: (v) {
-                            if (v != null) {
-                              setState(() => condicaoId = v);
-                              salvarRascunho();
-                            }
-                          },
-                        ),
-
-
-                        const SizedBox(height: 10),
-
-                        // =======================
-                        // OBSERVAÇÃO
-                        // =======================
-                        TextField(
-                          controller: obsCtrl,
-                          decoration: const InputDecoration(labelText: 'Observação'),
-                          onChanged: (_) => salvarRascunho(),
-                        ),
-
-                        const SizedBox(height: 20),
-
-                        // =======================
-                        // BUSCA PRODUTO
-                        // =======================
-                        TextField(
-                          controller: buscaCtrl,
-                          decoration: const InputDecoration(labelText: 'Buscar Produto'),
-                          onChanged: (_) => setState(() {}),
-                        ),
-
-                        if (produtosFiltrados.isNotEmpty)
-                          ListView.builder(
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
-                            itemCount: produtosFiltrados.length,
-                            itemBuilder: (context, idx) {
-                              final p = produtosFiltrados[idx];
-                              final base = buscarPrecoPorTabela(
-                                Map<String, dynamic>.from(p),
-                                tabelaId,
-                              );
-
-                              return ListTile(
-                                title: Text(p['nome'] ?? ''),
-                                subtitle: Text(
-                                  base > 0
-                                      ? 'Cód: ${p['codigo']} | R\$ ${base.toStringAsFixed(2)}'
-                                      : 'Cód: ${p['codigo']} • sem preço nesta tabela',
-                                ),
-                                trailing: const Icon(Icons.add_circle, color: Colors.green),
-                                onTap: () {
-                                  if (tabelaId == null || tabelaId == 0) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('Selecione a Tabela de Preço.')),
-                                    );
-                                    return;
-                                  }
-
-                                  // ============================
-                                  // 🚫 VERIFICA SE JÁ EXISTE
-                                  // ============================
-                                  final codigo = p['codigo'].toString();
-                                  final indexExistente = itens.indexWhere(
-                                          (item) => item['codigo'].toString() == codigo);
-
-                                  if (indexExistente != -1) {
-                                    showDialog(
-                                      context: context,
-                                      builder: (_) => AlertDialog(
-                                        title: const Text('Item já adicionado'),
-                                        content: Text(
-                                          'O produto "$codigo - ${p['nome']}" já está no pedido.\n\n'
-                                              'Deseja editar o item existente?',
-                                        ),
-                                        actions: [
-                                          TextButton(
-                                            child: const Text('Cancelar'),
-                                            onPressed: () => Navigator.pop(context),
-                                          ),
-                                          ElevatedButton(
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor: Color(0xFFFFCC00),
-                                              foregroundColor: Colors.black,
-                                            ),
-                                            child: const Text('Editar'),
-                                            onPressed: () {
-                                              Navigator.pop(context);
-                                              abrirPopupItem(index: indexExistente);
-                                            },
-                                          ),
-                                        ],
-                                      ),
-                                    );
-                                    return;
-                                  }
-
-                                  // ============================
-                                  // ✨ NÃO EXISTE → ADICIONA
-                                  // ============================
-                                  abrirPopupItem(produto: p, precoForcado: base);
-                                },
-                              );
-                            },
-                          ),
-
-
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          color: Color(0xFFFFCC00),
-                          child: const Text(
-                            "Itens do Pedido",
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 17,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.black,
-                            ),
-                          ),
-                        ),
-                        SizedBox(height: 10),
-
-// =======================
-// ITENS (SEM LISTVIEW)
-// =======================
-                        Column(
-                          children: itens.asMap().entries.map((e) {
-                            final i = e.key;
-                            final item = e.value;
-                            final subtotal = item['qtd'] * item['preco'];
-
-                            return Column(
-                              children: [
-                                ListTile(
-                                  title: Text("${item['codigo']} - ${item['nome']}"),
-
-                                  // ⭐ AQUI FOI ALTERADO (Row → Wrap) ⭐
-                                  subtitle: Wrap(
-                                    spacing: 12,
-                                    runSpacing: 6,
-                                    children: [
-
-                                      // QTD
-                                      Text(
-                                        "Qtd: ${item['qtd']}",
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-
-                                      // UNITÁRIO
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                                        decoration: BoxDecoration(
-                                          color: Color(0xFFFFE680),
-                                          borderRadius: BorderRadius.circular(4),
-                                        ),
-                                        child: Text(
-                                          "Unit: R\$ ${item['preco'].toStringAsFixed(2)}",
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 14,
-                                            color: Colors.black,
-                                          ),
-                                        ),
-                                      ),
-
-                                      // DESCONTO (se existir)
-                                      if ((item['desconto'] as num?)?.toDouble() != null &&
-                                          (item['desconto'] as num).toDouble() > 0)
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                                          decoration: BoxDecoration(
-                                            color: Colors.red.shade100,
-                                            borderRadius: BorderRadius.circular(4),
-                                          ),
-                                          child: Text(
-                                            "Desc ${_formatarDesconto(item['desconto'])}%",
-
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                              color: Colors.red,
-                                            ),
-                                          ),
-                                        ),
-
-                                      // SUBTOTAL
-                                      Text(
-                                        "Sub: R\$ ${(item['qtd'] * item['preco']).toStringAsFixed(2)}",
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.green,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-
-                                  onTap: () => abrirPopupItem(index: i),
-
-                                  trailing: IconButton(
-                                    icon: const Icon(Icons.delete, color: Colors.red),
-                                    onPressed: () {
-                                      setState(() => itens.removeAt(i));
-                                      salvarRascunho();
-                                    },
-                                  ),
-                                ),
-
-                                // Separador bonito entre itens
-                                const Padding(
-                                  padding: EdgeInsets.symmetric(horizontal: 12),
-                                  child: Divider(
-                                    color: Colors.grey,
-                                    thickness: 0.4,
-                                  ),
-                                ),
-                              ],
-                            );
-                          }).toList(),
-                        ),
-
-
-
-
-                        const Divider(height: 30),
-
-
-
-
-
-                      ],
-                    ),
-                  ),
-                ),
-
-                // =======================
-// RODAPÉ FIXO — CLEAN FINAL (BAIXO)
-// =======================
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    border: Border(top: BorderSide(color: Colors.grey.shade300)),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-
-                      // 🔹 DESCONTO GERAL
-                      Column(
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                      child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
-                            'Desconto geral',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: Colors.grey,
+
+                          // =======================
+                          // 🟨 CARD CLIENTE (DESTAQUE)
+                          // =======================
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(10),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.05),
+                                  blurRadius: 4,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+
+                                Row(
+                                  children: const [
+                                    Icon(Icons.person, color: Colors.black54),
+                                    SizedBox(width: 6),
+                                    Text(
+                                      'CLIENTE',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+
+                                const SizedBox(height: 8),
+
+                                TextField(
+                                  controller: clienteBuscaCtrl,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Buscar cliente por nome ou CNPJ',
+                                    prefixIcon: Icon(Icons.search),
+                                    filled: true,
+                                    fillColor: Color(0xFFF7F7F7),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.all(Radius.circular(8)),
+                                    ),
+                                    isDense: true,
+                                  ),
+                                  onChanged: buscarClientesOffline,
+                                ),
+                              ],
                             ),
                           ),
-                          const SizedBox(height: 2),
-                          InkWell(
-                            borderRadius: BorderRadius.circular(6),
-                            onTap: () {
-                              showDialog(
-                                context: context,
-                                builder: (_) {
-                                  final ctrl = TextEditingController(
-                                    text: descontoGeral == 0
-                                        ? ''
-                                        : _formatarDesconto(descontoGeral),
-                                  );
 
-                                  return AlertDialog(
-                                    title: const Text('Desconto Geral %'),
-                                    content: TextField(
-                                      controller: ctrl,
-                                      keyboardType:
-                                      const TextInputType.numberWithOptions(decimal: true),
-                                      decoration:
-                                      const InputDecoration(hintText: '0'),
-                                    ),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () => Navigator.pop(context),
-                                        child: const Text('Cancelar'),
-                                      ),
-                                      ElevatedButton(
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: const Color(0xFFFFCC00),
-                                          foregroundColor: Colors.black,
-                                        ),
-                                        onPressed: () {
-                                          final txt =
-                                          ctrl.text.replaceAll(',', '.').trim();
-                                          setState(() {
-                                            descontoGeral =
-                                                double.tryParse(txt) ?? 0;
-                                            aplicarDescontoGeral();
-                                            salvarRascunho();
-                                          });
-                                          Navigator.pop(context);
-                                        },
-                                        child: const Text('Aplicar'),
-                                      ),
-                                    ],
-                                  );
-                                },
-                              );
-                            },
-                            child: Container(
-                              width: 56,
-                              height: 30,
-                              alignment: Alignment.center,
-                              decoration: BoxDecoration(
-                                color: Colors.grey.shade200,
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                descontoGeral == 0
-                                    ? '%'
-                                    : '${_formatarDesconto(descontoGeral)}%',
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  color: Colors.black54,
-                                  fontWeight: FontWeight.w600,
+                          const SizedBox(height: 12),
+
+                          // =======================
+                          // TABELA + CONDIÇÃO
+                          // =======================
+                          Row(
+                            children: [
+                              Expanded(
+                                child: DropdownButtonFormField<String>(
+                                  value: _tabelaSelecionada,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Tabela de Preço',
+                                    isDense: true,
+                                  ),
+                                  items: tabelas.map((t) {
+                                    return DropdownMenuItem(
+                                      value: '${t['id']}',
+                                      child: Text('${t['nome']}'),
+                                    );
+                                  }).toList(),
+                                  onChanged: (v) {
+                                    setState(() {
+                                      _tabelaSelecionada = v;
+                                      tabelaId = int.tryParse(v ?? '');
+                                    });
+                                    if (tabelaId != null) {
+                                      recalcPrecosItensPorTabela(tabelaId);
+                                    }
+                                    salvarRascunho();
+                                  },
                                 ),
                               ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: DropdownButtonFormField<int>(
+                                  value: condicoes.any((c) => int.tryParse('${c['id']}') == condicaoId)
+                                      ? condicaoId
+                                      : null,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Condição',
+                                    isDense: true,
+                                  ),
+                                  items: condicoes.map((c) {
+                                    return DropdownMenuItem(
+                                      value: int.tryParse('${c['id']}'),
+                                      child: Text(c['nome'] ?? '---'),
+                                    );
+                                  }).toList(),
+                                  onChanged: (v) {
+                                    if (v != null) {
+                                      setState(() => condicaoId = v);
+                                      salvarRascunho();
+                                    }
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+
+                          const SizedBox(height: 8),
+
+                          // OBSERVAÇÃO
+                          TextField(
+                            controller: obsCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'Observação (opcional)',
+                              isDense: true,
                             ),
+                            onChanged: (_) => salvarRascunho(),
                           ),
                         ],
                       ),
+                    ),
+                  ),
 
-                      const Spacer(),
 
-                      // 🔹 TOTAL + SALVAR (COLADOS)
-                      Row(
-                        children: [
-                          Text(
-                            'Total R\$ ${calcularTotal().toStringAsFixed(2)}',
+                  // 2️⃣ SUGESTÕES DE CLIENTES (rolam com o conteúdo do cliente)
+                  if (sugestoesClientes.isNotEmpty)
+                    SliverList(
+                      delegate: SliverChildListDelegate(
+                        sugestoesClientes.take(5).map((cliente) {
+                          return ListTile(
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                            dense: true,
+                            tileColor: Colors.white,
+
+                            title: Text(
+                              "${cliente['cnpj']} • ${cliente['nome']}",
+                              style: const TextStyle(fontSize: 14),
+                            ),
+                            onTap: () {
+                              setState(() {
+                                clienteId = int.tryParse(cliente['id'].toString());
+                                clienteBuscaCtrl.text = cliente['nome'] ?? '';
+                                sugestoesClientes.clear();
+                              });
+                              salvarRascunho();
+                            },
+                          );
+                        }).toList(),
+                      ),
+                    ),
+
+                  // 3️⃣ SUGESTÕES DE PRODUTOS (rolam com a busca)
+                  if (produtosFiltrados.isNotEmpty)
+                    SliverList(
+                      delegate: SliverChildListDelegate(
+                        produtosFiltrados.map((p) {
+                          final base = buscarPrecoPorTabela(
+                            Map<String, dynamic>.from(p),
+                            tabelaId,
+                          );
+
+                          return Container(
+                            margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+                            decoration: BoxDecoration(
+                              color: Colors.yellow.shade50,
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(
+                                color: Colors.black87,
+                                width: 0.8,
+                              ),
+                            ),
+                            child: ListTile(
+                              dense: true,
+                              title: Text(
+                                p['nome'] ?? '',
+                                style: const TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                              subtitle: Text(
+                                base > 0
+                                    ? 'Cód: ${p['codigo']} | R\$ ${base.toStringAsFixed(2)}'
+                                    : 'Cód: ${p['codigo']} • sem preço nesta tabela',
+                              ),
+                              trailing: const Icon(Icons.add_circle, color: Colors.green),
+                              onTap: () {
+                                if (tabelaId == null || tabelaId == 0) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Selecione a Tabela de Preço.'),
+                                    ),
+                                  );
+                                  return;
+                                }
+
+                                final codigo = p['codigo'].toString();
+                                final indexExistente = itens.indexWhere(
+                                      (item) => item['codigo'].toString() == codigo,
+                                );
+
+                                if (indexExistente != -1) {
+                                  showDialog(
+                                    context: context,
+                                    builder: (_) => AlertDialog(
+                                      title: const Text('Item já adicionado'),
+                                      content: Text(
+                                        'O produto "$codigo - ${p['nome']}" já está no pedido.\n\n'
+                                            'Deseja editar o item existente?',
+                                      ),
+                                      actions: [
+                                        TextButton(
+                                          child: const Text('Cancelar'),
+                                          onPressed: () => Navigator.pop(context),
+                                        ),
+                                        ElevatedButton(
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: const Color(0xFFFFCC00),
+                                            foregroundColor: Colors.black,
+                                          ),
+                                          child: const Text('Editar'),
+                                          onPressed: () {
+                                            Navigator.pop(context);
+                                            abrirPopupItem(index: indexExistente);
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                  return;
+                                }
+
+                                abrirPopupItem(produto: p, precoForcado: base);
+                              },
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+
+                  // 4️⃣ HEADER FIXO (BUSCA PRODUTO + TÍTULO ITENS)
+                  _buildPersistentHeader(),
+
+                  // 5️⃣ LISTA DE ITENS DO PEDIDO (rola abaixo do header)
+                  SliverList(
+                    delegate: SliverChildListDelegate(
+                      itens.asMap().entries.map((e) {
+                        final i = e.key;
+                        final item = e.value;
+
+                        return Column(
+                          children: [
+                            ListTile(
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                              title: Text(
+                                "${item['codigo']} - ${item['nome']}",
+                                style: const TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                              subtitle: Wrap(
+                                spacing: 12,
+                                runSpacing: 6,
+                                children: [
+
+                                  // QTD
+                                  Text("Qtd: ${item['qtd']}"),
+
+                                  // UNITÁRIO
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 6, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFFFE680),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      "Unit: R\$ ${item['preco'].toStringAsFixed(2)}",
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 14,
+                                        color: Colors.black,
+                                      ),
+                                    ),
+                                  ),
+
+                                  // DESCONTO (se existir)
+                                  if ((item['desconto'] as num?)?.toDouble() != null &&
+                                      (item['desconto'] as num).toDouble() > 0)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 6, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color: Colors.red.shade100,
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: Text(
+                                        "Desc ${_formatarDesconto(item['desconto'])}%",
+
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.red,
+                                        ),
+                                      ),
+                                    ),
+
+                                  // SUBTOTAL
+                                  Text(
+                                    "Sub: R\$ ${(item['qtd'] * item['preco']).toStringAsFixed(2)}",
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.green,
+                                    ),
+                                  ),
+                                ],
+                              ),
+
+                              onTap: () => abrirPopupItem(index: i),
+
+                              trailing: IconButton(
+                                icon: const Icon(Icons.delete, color: Colors.red),
+                                onPressed: () {
+                                  setState(() => itens.removeAt(i));
+                                  salvarRascunho();
+                                },
+                              ),
+                            ),
+                            const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 12),
+                              child: Divider(
+                                color: Colors.grey,
+                                thickness: 0.4,
+                              ),
+                            ),
+                          ],
+                        );
+                      }).toList(),
+                    ),
+                  ),
+
+                  // Padding final para garantir que o último item não fique colado no rodapé
+                  const SliverToBoxAdapter(
+                    child: SizedBox(height: 12),
+                  ),
+
+                ],
+              ),
+            ),
+
+            // =======================
+            // RODAPÉ FIXO — CLEAN FINAL (BAIXO)
+            // =======================
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.grey.withOpacity(0.3),
+                    spreadRadius: 1,
+                    blurRadius: 3,
+                    offset: const Offset(0, -1),
+                  ),
+                ],
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+
+                  // 🔹 DESCONTO GERAL
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Desconto geral',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      InkWell(
+                        borderRadius: BorderRadius.circular(6),
+                        onTap: () {
+                          showDialog(
+                            context: context,
+                            builder: (_) {
+                              final ctrl = TextEditingController(
+                                text: descontoGeral == 0
+                                    ? ''
+                                    : _formatarDesconto(descontoGeral),
+                              );
+
+                              return AlertDialog(
+                                title: const Text('Desconto Geral %'),
+                                content: TextField(
+                                  controller: ctrl,
+                                  keyboardType:
+                                  const TextInputType.numberWithOptions(decimal: true),
+                                  decoration:
+                                  const InputDecoration(hintText: '0'),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(context),
+                                    child: const Text('Cancelar'),
+                                  ),
+                                  ElevatedButton(
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFFFFCC00),
+                                      foregroundColor: Colors.black,
+                                    ),
+                                    onPressed: () {
+                                      final txt =
+                                      ctrl.text.replaceAll(',', '.').trim();
+                                      setState(() {
+                                        descontoGeral =
+                                            double.tryParse(txt) ?? 0;
+                                        aplicarDescontoGeral();
+                                        salvarRascunho();
+                                      });
+                                      Navigator.pop(context);
+                                    },
+                                    child: const Text('Aplicar'),
+                                  ),
+                                ],
+                              );
+                            },
+                          );
+                        },
+                        child: Container(
+                          width: 56,
+                          height: 30,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade200,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            descontoGeral == 0
+                                ? '%'
+                                : '${_formatarDesconto(descontoGeral)}%',
                             style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                              color: Colors.black54,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
-                          const SizedBox(width: 12),
-                          SizedBox(
-                            height: 32,
-                            child: ElevatedButton(
-                              onPressed: enviando ? null : enviarPedido,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFFFFCC00),
-                                padding:
-                                const EdgeInsets.symmetric(horizontal: 12),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                              ),
-                              child: enviando
-                                  ? const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.black,
-                                ),
-                              )
-                                  : Text(
-                                (!_isOnline && widget.pedidoId == null
-                                    ? 'Offline'
-                                    : (!_isOnline && widget.pedidoId != null
-                                    ? 'Atualizar'
-                                    : (widget.pedidoId == null
-                                    ? 'Salvar'
-                                    : 'Atualizar'))),
-                                style: const TextStyle(
-                                  color: Colors.black,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 13,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                     ],
                   ),
-                ),
 
-              ],
+                  const Spacer(),
+
+                  // 🔹 TOTAL + SALVAR (COLADOS)
+                  Row(
+                    children: [
+                      Text(
+                        'Total R\$ ${calcularTotal().toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      SizedBox(
+                        height: 40,
+                        child: ElevatedButton(
+                          onPressed: enviando ? null : enviarPedido,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFFFCC00),
+                            padding:
+                            const EdgeInsets.symmetric(horizontal: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          child: enviando
+                              ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.black,
+                            ),
+                          )
+                              : Text(
+                            (!_isOnline && widget.pedidoId == null
+                                ? 'Salvar OFFLINE'
+                                : (!_isOnline && widget.pedidoId != null
+                                ? 'Atualizar OFFLINE'
+                                : (widget.pedidoId == null
+                                ? 'Salvar ONLINE'
+                                : 'Atualizar ONLINE'))),
+                            style: const TextStyle(
+                              color: Colors.black,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          )
+          ],
+        ),
 
       ),
     );
+  }
+}
+
+// =================================================================
+// 🆕 DELEGATE DO SLIVER PERSISTENT HEADER
+// =================================================================
+class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
+  _SliverAppBarDelegate({
+    required this.minHeight,
+    required this.maxHeight,
+    required this.child,
+  });
+
+  final double minHeight;
+  final double maxHeight;
+  final Widget child;
+
+  @override
+  double get minExtent => minHeight;
+
+  @override
+  double get maxExtent => maxHeight;
+
+  // Retorna o Widget a ser renderizado
+  @override
+  Widget build(
+      BuildContext context, double shrinkOffset, bool overlapsContent) {
+    return SizedBox.expand(child: child);
+  }
+
+  // Define quando o header deve ser reconstruído (normalmente não é necessário)
+  @override
+  bool shouldRebuild(_SliverAppBarDelegate oldDelegate) {
+    return maxHeight != oldDelegate.maxHeight ||
+        minHeight != oldDelegate.minHeight ||
+        child != oldDelegate.child;
   }
 }
