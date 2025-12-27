@@ -43,3 +43,14 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# ===============================
+# 🔐 SEGURANÇA - ANDROID / PLAY STORE
+# ===============================
+
+# Keystore (NUNCA versionar)
+*.keystore
+
+# Arquivo de propriedades de assinatura
+key.properties
+

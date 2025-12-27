@@ -1,18 +1,15 @@
 // =============================================================
-// 🔐 TOOCA CRM - LOGIN SCREEN (v9.0 EVA SUPREMA FINAL)
-// -------------------------------------------------------------
-// ✔ Banco 100% fixado no toocagroup.com.br
-// ✔ Impede mistura com bancos antigos (app.tooca, etc.)
-// ✔ Limpa e recria sessão de forma segura
-// ✔ Mantém todas as chaves usadas pelo app atual
-// ✔ Fluxo de bloqueio + expiração intacto
-// ✔ Compatível com Splash, Home, Pedidos, Sincronização, EVA
+// 🔐 TOOCA CRM - LOGIN SCREEN
+// v9.2 EVA SUPREMA FINAL + Lembrar Usuário (CORRIGIDO)
 // =============================================================
 
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'home_screen.dart';
 import 'TelaBloqueio.dart';
@@ -27,11 +24,33 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final emailCtrl = TextEditingController();
   final senhaCtrl = TextEditingController();
+
   bool carregando = false;
   bool mostrarSenha = false;
+  bool lembrarUsuario = true;
 
   // ==========================================================
-  // 🔑 LOGIN PRINCIPAL
+  // 🔁 INIT
+  // ==========================================================
+  @override
+  void initState() {
+    super.initState();
+    _carregarUsuarioSalvo();
+  }
+
+  Future<void> _carregarUsuarioSalvo() async {
+    final prefs = await SharedPreferences.getInstance();
+    final emailSalvo = prefs.getString('email_salvo');
+
+    if (emailSalvo != null && emailSalvo.isNotEmpty) {
+      emailCtrl.text = emailSalvo;
+      // Não chamo setState aqui, pois o lembrarUsuario é true por padrão.
+      // setState(() {});
+    }
+  }
+
+  // ==========================================================
+  // 🔑 LOGIN
   // ==========================================================
   Future<void> _fazerLogin() async {
     final email = emailCtrl.text.trim();
@@ -45,9 +64,6 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => carregando = true);
 
     try {
-      // ==========================================================
-      // 🌐 API FIXADA DEFINITIVA
-      // ==========================================================
       final url = Uri.parse('https://toocagroup.com.br/api/login.php');
 
       final response = await http.post(
@@ -63,7 +79,6 @@ class _LoginScreenState extends State<LoginScreen> {
         throw Exception("Resposta inválida do servidor");
       }
 
-      debugPrint("📡 Retorno login: $data");
 
       if (data['status'] != 'ok') {
         _msg(data['mensagem'] ?? 'Falha no login.');
@@ -71,94 +86,102 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
-      // ==========================================================
-      // ✔ DADOS RECEBIDOS DO LOGIN
-      // ==========================================================
       final int usuarioId = data['usuario_id'] ?? 0;
       final int empresaId = data['empresa_id'] ?? 0;
-      final nomeUser = data['nome'] ?? "Usuário";
+      final nomeUser = data['nome'] ?? "Usuário"; // Pego o nome para salvar
 
-      final planoUser = data['plano_usuario'] ?? "free";
-      final planoEmpresa = data['plano_empresa'] ?? "free";
+      final planoUser = data['plano_usuario'] ?? 'free';
+      final planoEmpresa = data['plano_empresa'] ?? 'free';
+      final empresaStatus = data['empresa_status'] ?? 'ativo';
+      final expiraEmpresa = _normalizarData(data['data_expiracao'] ?? '');
 
-      final empresaStatus = data['empresa_status'] ?? "ativo";
-      final expiraEmpresa = _normalizarData(data['data_expiracao'] ?? "");
-
-      // ==========================================================
-      // 🚫 BLOQUEIO DE USUÁRIO INVÁLIDO
-      // ==========================================================
       if (usuarioId <= 0) {
-        _msg("❌ Usuário inválido. Contate o suporte.");
+        _msg('Usuário inválido.');
         setState(() => carregando = false);
         return;
       }
 
-      // ==========================================================
-      // 🛡️ BLOQUEIO POR PLANO / EXPIRAÇÃO
-      // ==========================================================
-      if (empresaStatus != "ativo" || !_empresaAtiva(expiraEmpresa)) {
-        _irPara(TelaBloqueio(
-          planoEmpresa: planoEmpresa,
-          empresaExpira: expiraEmpresa,
-        ));
+      if (empresaStatus != 'ativo' || !_empresaAtiva(expiraEmpresa)) {
+        _irPara(
+          TelaBloqueio(
+            planoEmpresa: planoEmpresa,
+            empresaExpira: expiraEmpresa,
+          ),
+        );
         return;
       }
 
-      // ==========================================================
-      // 🧹 LIMPAR SESSÃO ANTES DE SALVAR
-      // ==========================================================
       final prefs = await SharedPreferences.getInstance();
-      await prefs.clear();
-      await prefs.reload();
 
-      // ==========================================================
-      // 💾 SALVAR SESSÃO (100% COMPATÍVEL COM O APP ATUAL)
-      // ==========================================================
+      // 1. 🔐 SALVA/REMOVE EMAIL SALVO (Lembrar Usuário)
+      if (lembrarUsuario) {
+        await prefs.setString('email_salvo', email);
+      } else {
+        await prefs.remove('email_salvo');
+      }
+
+      // 2. 🧹 LIMPA DADOS DE SESSÃO ANTIGA (Chaves específicas)
+      await prefs.remove('usuario_id');
+      await prefs.remove('empresa_id');
+      await prefs.remove('email');
+      await prefs.remove('nome');
+      await prefs.remove('plano_usuario');
+      await prefs.remove('plano_empresa');
+
+      // 3. 💾 SALVAR NOVOS DADOS DE SESSÃO (CORRIGIDO)
       await prefs.setInt('usuario_id', usuarioId);
       await prefs.setInt('empresa_id', empresaId);
-
       await prefs.setString('email', email);
       await prefs.setString('nome', nomeUser);
-
       await prefs.setString('plano_usuario', planoUser);
       await prefs.setString('plano_empresa', planoEmpresa);
-      await prefs.setString('tipo_usuario', data['tipo'] ?? 'vendedor');
-      await prefs.setBool('is_master', data['is_master'] == 1);
-
-
       await prefs.setString('empresa_status', empresaStatus);
       await prefs.setString('empresa_expira', expiraEmpresa);
 
-      debugPrint("🟢 Sessão salva: usuario=$usuarioId empresa=$empresaId");
 
-      // ==========================================================
-      // ✔ ENTRAR NO APP
-      // ==========================================================
-      _irPara(HomeScreen(
-        usuarioId: usuarioId,
-        empresaId: empresaId,
-        plano: planoUser,
-        email: email,
-      ));
+      // 4. ✔ ENTRAR NO APP
+      _irPara(
+        HomeScreen(
+          usuarioId: usuarioId,
+          empresaId: empresaId,
+          plano: planoUser,
+          email: email,
+        ),
+      );
     } catch (e) {
-      debugPrint("❌ Erro login: $e");
-      _msg("Erro de conexão com o servidor.");
+      debugPrint('❌ Erro login: $e');
+      _msg('Erro de conexão.');
     }
 
     if (mounted) setState(() => carregando = false);
   }
 
   // ==========================================================
-  // 📅 Normalização de Data
+  // 📞 WHATSAPP
   // ==========================================================
-  String _normalizarData(String valor) {
-    if (valor.isEmpty || valor == 'null' || valor == '0000-00-00') return "";
-    return valor.contains(" ") ? valor.split(" ").first : valor;
+  void _abrirWhatsapp() async {
+    const telefone = '5511942815500';
+    const mensagem = 'Olá, gostaria de contratar o Tooca CRM!';
+
+    final url = Uri.parse(
+      'https://wa.me/$telefone?text=${Uri.encodeComponent(mensagem)}',
+    );
+
+    try {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      _msg('Não foi possível abrir o WhatsApp.');
+    }
   }
 
   // ==========================================================
-  // 🔐 Empresa ativa?
+  // 🔧 HELPERS
   // ==========================================================
+  String _normalizarData(String valor) {
+    if (valor.isEmpty || valor == '0000-00-00') return '';
+    return valor.contains(' ') ? valor.split(' ').first : valor;
+  }
+
   bool _empresaAtiva(String expira) {
     if (expira.isEmpty) return true;
     final dt = DateTime.tryParse(expira);
@@ -166,16 +189,12 @@ class _LoginScreenState extends State<LoginScreen> {
     return dt.isAfter(DateTime.now());
   }
 
-  // ==========================================================
-  // 🔊 Mensagem rápida
-  // ==========================================================
   void _msg(String txt) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(txt)));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(txt)),
+    );
   }
 
-  // ==========================================================
-  // ⛳ Navegar
-  // ==========================================================
   void _irPara(Widget tela) {
     Navigator.pushReplacement(
       context,
@@ -199,8 +218,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 'Tooca CRM',
                 style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
               ),
-
-              const SizedBox(height: 40),
+              const SizedBox(height: 36),
 
               TextField(
                 controller: emailCtrl,
@@ -209,7 +227,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   icon: Icons.email_outlined,
                 ),
               ),
-
               const SizedBox(height: 16),
 
               TextField(
@@ -220,7 +237,9 @@ class _LoginScreenState extends State<LoginScreen> {
                   icon: Icons.lock_outline,
                   suffix: IconButton(
                     icon: Icon(
-                      mostrarSenha ? Icons.visibility_off : Icons.visibility,
+                      mostrarSenha
+                          ? Icons.visibility_off
+                          : Icons.visibility,
                     ),
                     onPressed: () =>
                         setState(() => mostrarSenha = !mostrarSenha),
@@ -228,7 +247,24 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
 
-              const SizedBox(height: 28),
+              // 🔁 LEMBRAR USUÁRIO
+              Row(
+                children: [
+                  Checkbox(
+                    value: lembrarUsuario,
+                    activeColor: const Color(0xFFFFC107),
+                    onChanged: (v) {
+                      setState(() => lembrarUsuario = v ?? false);
+                    },
+                  ),
+                  const Text(
+                    'Lembrar usuário',
+                    style: TextStyle(fontSize: 13),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 12),
 
               SizedBox(
                 width: double.infinity,
@@ -251,11 +287,91 @@ class _LoginScreenState extends State<LoginScreen> {
                       color: Colors.black,
                     ),
                   )
-                      : const Text('Entrar', style: TextStyle(fontSize: 16)),
+                      : const Text(
+                    'Entrar',
+                    style: TextStyle(fontSize: 16),
+                  ),
                 ),
               ),
 
-              const SizedBox(height: 12),
+              const SizedBox(height: 28),
+
+              // ⭐ CARD CONTATO
+              Align(
+                alignment: Alignment.center,
+                child: SizedBox(
+                  width: 260,
+                  child: Card(
+                    elevation: 3,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(14),
+                      onTap: _abrirWhatsapp,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 16,
+                          horizontal: 16,
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.green.withOpacity(0.15),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.phone, // Usamos 'Icons.phone' como substituto seguro do WhatsApp
+                                color: Colors.green,
+                                size: 22,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            const Text(
+                              'Fale com a Tooca',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            RichText(
+                              textAlign: TextAlign.center,
+                              text: TextSpan(
+                                text:
+                                'Peça seu teste e contrate nosso sistema ',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.black54,
+                                ),
+                                children: [
+                                  TextSpan(
+                                    text: 'Clique aqui!',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.green,
+                                      fontWeight: FontWeight.bold,
+                                      decoration: TextDecoration.underline,
+                                    ),
+                                    recognizer: TapGestureRecognizer()
+                                      ..onTap = _abrirWhatsapp,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 18),
               const Text(
                 '© Tooca Group 2025',
                 style: TextStyle(color: Colors.black54, fontSize: 13),
@@ -267,9 +383,6 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  // ==========================================================
-  // 🔧 UI Helper
-  // ==========================================================
   InputDecoration _campoDeco({
     required String label,
     required IconData icon,

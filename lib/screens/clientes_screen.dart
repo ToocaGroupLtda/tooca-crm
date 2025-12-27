@@ -1,12 +1,12 @@
 // =============================================================
-// 🚀 TOOCA CRM - CLIENTES SCREEN (v7.6 EVA SUPREMO FINAL)
+// 🚀 TOOCA CRM - CLIENTES SCREEN (v7.6 EVA SUPREMO FINAL - FIXED)
 // -------------------------------------------------------------
 // ✔ Lista clientes online → fallback offline
 // ✔ Toast ao clicar no cliente (nome + cnpj + cidade)
 // ✔ Abre cadastro do cliente
 // ✔ Excluir cliente (API + offline)
 // ✔ Atualiza lista ao voltar
-// ✔ IDs reais do SharedPreferences
+// ✔ IDs reais do SharedPreferences (CORRIGIDO PARA MÚLTIPLAS EMPRESAS)
 // ✔ UI moderna padrão Tooca
 // ✔ Sincronização silenciosa automática
 // ✔ Compatível com listar_clientes.php e listar_excluir_cliente.php
@@ -56,16 +56,18 @@ class _ClientesScreenState extends State<ClientesScreen> {
   }
 
   // =============================================================
-  // 🔑 Carregar IDs reais do SharedPreferences
+  // 🔑 Carregar IDs reais - CORREÇÃO: Prioriza o ID vindo do Login
   // =============================================================
   Future<void> carregarIds() async {
     final prefs = await SharedPreferences.getInstance();
 
-    empresaId = prefs.getInt('empresa_id') ?? widget.empresaId;
-    usuarioId = prefs.getInt('usuario_id') ?? widget.usuarioId;
+    // AQUI ESTAVA O ERRO: Ele pegava do SharedPreferences primeiro.
+    // Agora ele verifica se o widget enviou um ID válido (>0), se sim, usa o do widget.
+    empresaId = (widget.empresaId > 0) ? widget.empresaId : (prefs.getInt('empresa_id') ?? 0);
+    usuarioId = (widget.usuarioId > 0) ? widget.usuarioId : (prefs.getInt('usuario_id') ?? 0);
 
-    debugPrint("🔥 ClientesScreen → empresaId REAL = $empresaId");
-    debugPrint("🔥 ClientesScreen → usuarioId REAL = $usuarioId");
+    debugPrint("🔥 ClientesScreen → empresaId DEFINIDO = $empresaId");
+    debugPrint("🔥 ClientesScreen → usuarioId DEFINIDO = $usuarioId");
 
     await carregarClientes();
   }
@@ -110,7 +112,7 @@ class _ClientesScreenState extends State<ClientesScreen> {
           carregando = false;
         });
 
-        // Salva OFFLINE
+        // Salva OFFLINE com o ID correto da empresa atual
         prefs.setString(
           'clientes_offline_$empresaId',
           jsonEncode({'clientes': lista}),

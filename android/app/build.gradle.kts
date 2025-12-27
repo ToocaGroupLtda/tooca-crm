@@ -1,3 +1,6 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -5,8 +8,12 @@ plugins {
 }
 
 android {
-    namespace = "com.toocagroup.crm"
-    compileSdk = 36             // obrigatorio para Android 14
+
+    // =====================================================
+    // 📦 IDENTIDADE DO APP
+    // =====================================================
+    namespace = "com.toocagroup.crm.tooca"
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -19,31 +26,45 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.toocagroup.crm"
-        minSdk = 29              // Android 10
-        targetSdk = 35           // recomendado
-        versionCode = 5
+        applicationId = "com.toocagroup.crm.tooca"
+        minSdk = 29
+        targetSdk = 35
+
+        versionCode = 2
         versionName = flutter.versionName
     }
 
     // =====================================================
-    // 🔐 ASSINATURA PARA PLAY STORE — RELEASE SIGNED
+    // 🔐 SIGNING CONFIG (APENAS SE EXISTIR)
     // =====================================================
+    val keystoreProperties = Properties()
+    val keystorePropertiesFile = rootProject.file("key.properties")
+
     signingConfigs {
-        create("release") {
-            storeFile = file("tooca.keystore")
-            storePassword = "Vendas2025$$"
-            keyAlias = "tooca"
-            keyPassword = "Vendas2025$$"
+        if (keystorePropertiesFile.exists()) {
+            keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+
+            create("release") {
+                storeFile = file(keystoreProperties["storeFile"].toString())
+                storePassword = keystoreProperties["storePassword"].toString()
+                keyAlias = keystoreProperties["keyAlias"].toString()
+                keyPassword = keystoreProperties["keyPassword"].toString()
+            }
         }
     }
 
-    // =====================================================
-    // 🏗️ TIPOS DE BUILD (DEBUG / RELEASE)
-    // =====================================================
     buildTypes {
+
+        // ✅ DEBUG NUNCA ASSINADO COM RELEASE
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("debug")
+        }
+
+        // 🔒 RELEASE SÓ ASSINA SE TIVER KEYSTORE
         getByName("release") {
-            signingConfig = signingConfigs.getByName("release")
+            if (keystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = false
             isShrinkResources = false
         }
