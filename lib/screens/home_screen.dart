@@ -33,6 +33,8 @@ class _HomeScreenState extends State<HomeScreen> {
   late String planoAtual;
   String? empresaExpira;
 
+  bool mostrarStatusEmpresa = false; // 👈 CONTROLE DO CARD
+
   List<dynamic> ultimosPedidos = [];
   List<dynamic> pedidosRascunho = [];
   double totalMes = 0.0;
@@ -45,9 +47,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
 
-    // Plano inicial (pode ser temporário)
     planoAtual = widget.plano.toLowerCase().trim();
-
     _carregarPlanoReal();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -60,7 +60,6 @@ class _HomeScreenState extends State<HomeScreen> {
   // =============================================================
   Future<void> _carregarPlanoReal() async {
     final prefs = await SharedPreferences.getInstance();
-
     final planoPrefs = prefs.getString('plano_empresa');
     final expiraPrefs = prefs.getString('empresa_expira');
 
@@ -72,15 +71,13 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       empresaExpira = expiraPrefs;
     });
-
-    debugPrint('🏠 HOME -> plano=$planoAtual | expira=$empresaExpira');
   }
 
   // =============================================================
-  // 🔄 Sincronização (server-driven)
+  // 🔄 SINCRONIZAÇÃO
   // =============================================================
   Future<void> _executarSincronizacaoInicial() async {
-    final bool ativa =
+    final ativa =
     await SincronizacaoService.consultarStatusEmpresa(widget.empresaId);
 
     if (!ativa) return;
@@ -97,6 +94,21 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     await carregarUltimosPedidos();
+
+    if (!mounted) return;
+
+    // 👇 MOSTRA O CARD
+    setState(() {
+      mostrarStatusEmpresa = true;
+    });
+
+    // 👇 ESCONDE AUTOMATICAMENTE
+    Future.delayed(const Duration(seconds: 6), () {
+      if (!mounted) return;
+      setState(() {
+        mostrarStatusEmpresa = false;
+      });
+    });
   }
 
   // =============================================================
@@ -158,7 +170,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // =============================================================
-  // 🎨 STATUS VISUAL DA EMPRESA
+  // 🎨 STATUS DA EMPRESA
   // =============================================================
   Color _corStatusEmpresa() {
     if (planoAtual == 'free') return Colors.red;
@@ -179,29 +191,54 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // =============================================================
+  // 🏢 CARD DE STATUS (DISCRETO)
+  // =============================================================
   Widget _avisoEmpresa() {
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.all(12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: _corStatusEmpresa().withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _corStatusEmpresa()),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '📊 Status da Empresa',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 6),
-          Text('🏢 Empresa ID: ${widget.empresaId}'),
-          Text('👤 Usuário ID: ${widget.usuarioId}'),
-          Text('📦 Plano: ${planoAtual.toUpperCase()}'),
-          Text('⏰ Vencimento: ${empresaExpira ?? 'não informado'}'),
-        ],
+    return Center(
+      child: Container(
+        width: 280,
+        margin: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 10),
+        decoration: BoxDecoration(
+          color: _corStatusEmpresa().withOpacity(0.1),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _corStatusEmpresa(), width: 1),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Empresa • ${planoAtual.toUpperCase()}',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: _corStatusEmpresa(),
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 2),
+            Text(
+              empresaExpira != null && empresaExpira!.isNotEmpty
+                  ? 'Vence em $empresaExpira'
+                  : 'Vencimento não informado',
+              style: const TextStyle(
+                fontSize: 11,
+                color: Colors.black54,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Empresa ID: ${widget.empresaId} • Usuário ID: ${widget.usuarioId}',
+              style: const TextStyle(
+                fontSize: 10,
+                color: Colors.black45,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -274,7 +311,6 @@ class _HomeScreenState extends State<HomeScreen> {
       body: SingleChildScrollView(
         child: Column(
           children: [
-            _avisoEmpresa(),
             Padding(
               padding: const EdgeInsets.all(16),
               child: GridView.builder(
@@ -329,6 +365,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
             ),
+
+            // 👇 APARECE SÓ QUANDO SINCRONIZA
+            if (mostrarStatusEmpresa) _avisoEmpresa(),
           ],
         ),
       ),
