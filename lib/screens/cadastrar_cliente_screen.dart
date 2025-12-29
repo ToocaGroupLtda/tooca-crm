@@ -1,20 +1,17 @@
 // =============================================================
-// 🚀 TOOCA CRM - CADASTRAR / EDITAR CLIENTE (v7.6 EVA SUPREMO)
+// 🚀 TOOCA CRM - CADASTRAR / EDITAR CLIENTE (v7.9.2 EVA SUPREMO FIXED)
 // -------------------------------------------------------------
-// ✔ Cadastro + Edição + Exclusão
-// ✔ Evita clientes duplicados (nome ou CNPJ)
-// ✔ Preenche automático via CNPJ (BrasilAPI)
-// ✔ 100% compatível com listar_salvar_cliente.php
-// ✔ Botão EXCLUIR cliente (API + Offline)
-// ✔ Atualiza ClienteScreen ao voltar (Navigator.pop TRUE)
-// ✔ Layout Tooca + Código limpo
-// ✔ Cache Offline por empresa
+// ✔ CORREÇÃO: Vinculação de IDs na Fila Offline garantida
+// ✔ Adição dos campos: Nome do Contato e Observação
+// ✔ MODO OFFLINE agora adiciona na FILA de PENDENTES (update_cliente / novo_cliente)
 // =============================================================
 
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+
 
 class CadastrarClienteScreen extends StatefulWidget {
   final int usuarioId;
@@ -36,7 +33,7 @@ class CadastrarClienteScreen extends StatefulWidget {
 
 class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
   // -----------------------------------------------------------
-  // CONTROLADORES
+  // CONTROLADORES (NOVOS CAMPOS ADICIONADOS AQUI)
   // -----------------------------------------------------------
   final cnpjCtrl = TextEditingController();
   final razaoCtrl = TextEditingController();
@@ -48,6 +45,8 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
   final cidadeCtrl = TextEditingController();
   final estadoCtrl = TextEditingController();
   final cepCtrl = TextEditingController();
+  final contatoCtrl = TextEditingController(); // ✅ NOVO CAMPO
+  final obsCtrl = TextEditingController();     // ✅ NOVO CAMPO
 
   bool enviando = false;
   bool buscandoCnpj = false;
@@ -58,6 +57,11 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
     _carregarDadosSeEdicao();
   }
 
+  Future<bool> _temInternet() async {
+    final result = await Connectivity().checkConnectivity();
+    return result != ConnectivityResult.none;
+  }
+
   // -----------------------------------------------------------
   // SE ESTIVER EDITANDO, PREENCHE OS CAMPOS
   // -----------------------------------------------------------
@@ -66,16 +70,19 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
 
     final c = widget.cliente!;
 
-    cnpjCtrl.text = c['cnpj'] ?? '';
-    razaoCtrl.text = c['razao_social'] ?? c['nome'] ?? '';
+    cnpjCtrl.text     = c['cnpj'] ?? '';
+    razaoCtrl.text    = c['razao_social'] ?? c['nome'] ?? '';
     fantasiaCtrl.text = c['fantasia'] ?? c['nome'] ?? '';
     telefoneCtrl.text = c['telefone'] ?? '';
-    emailCtrl.text = c['email'] ?? '';
+    emailCtrl.text    = c['email'] ?? '';
     enderecoCtrl.text = c['endereco'] ?? '';
-    bairroCtrl.text = c['bairro'] ?? '';
-    cidadeCtrl.text = c['cidade'] ?? '';
-    estadoCtrl.text = c['estado'] ?? '';
-    cepCtrl.text = c['cep'] ?? '';
+    bairroCtrl.text   = c['bairro'] ?? '';
+    cidadeCtrl.text   = c['cidade'] ?? '';
+    estadoCtrl.text   = c['uf'] ?? '';
+    cepCtrl.text      = c['cep'] ?? '';
+
+    contatoCtrl.text  = c['contato'] ?? '';
+    obsCtrl.text      = c['observacao'] ?? '';
   }
 
   @override
@@ -90,6 +97,8 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
     cidadeCtrl.dispose();
     estadoCtrl.dispose();
     cepCtrl.dispose();
+    contatoCtrl.dispose();
+    obsCtrl.dispose();
     super.dispose();
   }
 
@@ -148,13 +157,11 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
     final lista = List.from(data['clientes'] ?? []);
 
     return lista.any((c) {
-      final mesmoCnpj = c['cnpj']?.toString() == cnpj;
+      final mesmoCnpj = c['cnpj']?.toString() == cnpj && cnpj.isNotEmpty;
       final nomeBanco = (c['fantasia'] ?? c['nome'] ?? '').toString().trim().toLowerCase();
       final mesmoNome = nomeBanco == nome.toLowerCase();
 
-
-      // Se for edição, ignora o próprio cliente
-      if (widget.cliente != null && c['id'] == widget.cliente!['id']) {
+      if (widget.cliente != null && c['id'].toString() == widget.cliente!['id'].toString()) {
         return false;
       }
 
@@ -177,7 +184,6 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
       return;
     }
 
-    // Duplicado?
     if (await _existeClienteDuplicado(nome, cnpj)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -187,6 +193,36 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
       );
       return;
     }
+
+    final online = await _temInternet();
+
+    if (!online) {
+      await _atualizarCacheCliente(
+        widget.cliente?['id'],
+        nome,
+        cnpj,
+      );
+
+      await _adicionarClienteAFilaOffline(
+        widget.cliente?['id'],
+        nome,
+        cnpj,
+      );
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            "⚠️ Sem internet. Alterações salvas localmente e serão enviadas quando a conexão voltar.",
+          ),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 4),
+        ),
+      );
+
+      Navigator.pop(context, true);
+      return;
+    }
+
 
     setState(() => enviando = true);
 
@@ -200,7 +236,7 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
         "cliente_id": widget.cliente?['id'],
         "empresa_id": widget.empresaId,
         "usuario_id": widget.usuarioId,
-        "plano": widget.plano,              //  👈🔥  aqui está a correção!
+        "plano": widget.plano,
         "nome": nome,
         "fantasia": fantasiaCtrl.text.trim(),
         "razao_social": razaoCtrl.text.trim(),
@@ -212,6 +248,8 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
         "cidade": cidadeCtrl.text.trim(),
         "uf": estadoCtrl.text.trim(),
         "cep": cepCtrl.text.trim(),
+        "contato": contatoCtrl.text.trim(),
+        "observacao": obsCtrl.text.trim(),
       });
 
 
@@ -224,7 +262,8 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
       final data = jsonDecode(resp.body);
 
       if (data['status'] == 'ok') {
-        await _salvarClienteOffline(data, nome, cnpj);
+        final id = data['cliente_id'] ?? widget.cliente?['id'];
+        await _atualizarCacheCliente(id, nome, cnpj, syncPendente: false);
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -248,13 +287,14 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
   }
 
   // ===========================================================
-  // 💾 SALVAR OFFLINE (CRIAR / EDITAR)
+  // 💾 1/3: ATUALIZA O CACHE DE CLIENTES
   // ===========================================================
-  Future<void> _salvarClienteOffline(
-      Map<String, dynamic> data,
+  Future<void> _atualizarCacheCliente(
+      dynamic id,
       String nome,
-      String cnpj,
-      ) async {
+      String cnpj, {
+        bool syncPendente = true,
+      }) async {
     final prefs = await SharedPreferences.getInstance();
     final chave = "clientes_offline_${widget.empresaId}";
 
@@ -263,8 +303,10 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
 
     List lista = jsonArmazenado["clientes"] ?? [];
 
+    final clienteIdFinal = id ?? 'temp_${DateTime.now().millisecondsSinceEpoch}';
+
     final clienteOffline = {
-      "id": data['cliente_id'] ?? widget.cliente?['id'],
+      "id": clienteIdFinal,
       "nome": nome,
       "razao_social": razaoCtrl.text.trim(),
       "fantasia": fantasiaCtrl.text.trim(),
@@ -276,29 +318,91 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
       "cidade": cidadeCtrl.text.trim(),
       "uf": estadoCtrl.text.trim(),
       "cep": cepCtrl.text.trim(),
+      "contato": contatoCtrl.text.trim(),
+      "observacao": obsCtrl.text.trim(),
+      "sync_pendente": syncPendente,
     };
 
-    // Se edição → substitui
+
     if (widget.cliente != null) {
-      lista.removeWhere((c) => c['id'] == widget.cliente!['id']);
+      lista.removeWhere((c) => c['id'].toString() == widget.cliente!['id'].toString());
     }
 
+    if (id != null && id.toString().startsWith('temp_')) {
+      lista.removeWhere((c) => c['id'].toString() == id.toString());
+    }
+
+
     lista.insert(0, clienteOffline);
-
     jsonArmazenado["clientes"] = lista;
-
     await prefs.setString(chave, jsonEncode(jsonArmazenado));
   }
 
+  // ===========================================================
+  // 💾 2/3: ADICIONA A AÇÃO NA FILA DE SINCRONIZAÇÃO (Offline)
+  // ===========================================================
+  Future<void> _adicionarClienteAFilaOffline(
+      dynamic id,
+      String nome,
+      String cnpj,
+      ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final chaveFila = 'pedidos_pendentes_${widget.empresaId}';
+    final isEdit = id != null;
+
+    final clienteDados = {
+      "id": id,
+      "empresa_id": widget.empresaId, // 🔑 CORREÇÃO: ID da empresa na fila
+      "usuario_id": widget.usuarioId, // 🔑 CORREÇÃO: ID do usuário na fila
+      "plano": widget.plano,
+      "nome": nome,
+      "razao_social": razaoCtrl.text.trim(),
+      "fantasia": fantasiaCtrl.text.trim(),
+      "cnpj": cnpj,
+      "telefone": telefoneCtrl.text.trim(),
+      "email": emailCtrl.text.trim(),
+      "endereco": enderecoCtrl.text.trim(),
+      "bairro": bairroCtrl.text.trim(),
+      "cidade": cidadeCtrl.text.trim(),
+      "uf": estadoCtrl.text.trim(),
+      "cep": cepCtrl.text.trim(),
+      "contato": contatoCtrl.text.trim(),
+      "observacao": obsCtrl.text.trim(),
+    };
+
+    final registro = {
+      'tipo': isEdit ? 'update_cliente' : 'novo_cliente',
+      'dados': clienteDados,
+      'timestamp': DateTime.now().toIso8601String(),
+    };
+
+    final fila = prefs.getStringList(chaveFila) ?? <String>[];
+
+    if (isEdit) {
+      fila.removeWhere((raw) {
+        try {
+          final reg = jsonDecode(raw);
+          return (reg['tipo'] == 'update_cliente' || reg['tipo'] == 'novo_cliente')
+              && reg['dados']['id'].toString() == id.toString();
+        } catch (_) {
+          return false;
+        }
+      });
+    }
+
+    fila.add(jsonEncode(registro));
+    await prefs.setStringList(chaveFila, fila);
+  }
+
 // ===========================================================
-// 🗑️ EXCLUIR CLIENTE (CORRIGIDO v7.7 EVA SUPREMO)
+// 🗑️ EXCLUIR CLIENTE
 // ===========================================================
   Future<void> excluirCliente() async {
     if (widget.cliente == null) return;
 
     final nomeCliente = widget.cliente!['nome'] ?? "Cliente";
+    final dynamic idOriginal = widget.cliente!['id'];
 
-    // 🔔 CONFIRMAÇÃO
     final confirma = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -327,34 +431,42 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
 
     if (confirma != true) return;
 
-    try {
-      final int idCorrigido =
-          int.tryParse(widget.cliente!['id'].toString()) ?? 0;
-      final int empresaCorrigido =
-          int.tryParse(widget.empresaId.toString()) ?? 0;
+    final online = await _temInternet();
 
+    if (!online) {
+      await _removerOffline(idOriginal);
+      await _adicionarExclusaoAFilaOffline(idOriginal);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("⚠️ Sem internet. Exclusão salva localmente."),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      Navigator.pop(context, true);
+      return;
+    }
+
+    try {
       final resp = await http.post(
         Uri.parse("https://toocagroup.com.br/api/listar_excluir_cliente.php"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
-          "id": idCorrigido,
-          "empresa_id": empresaCorrigido,
+          "id": idOriginal,
+          "empresa_id": widget.empresaId,
         }),
       );
 
       final data = jsonDecode(resp.body);
 
       if (data['status'] == 'ok') {
-        await _removerOffline(idCorrigido);
-
-        // 🎉 AVISO DE SUCESSO
+        await _removerOffline(idOriginal);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Cliente $nomeCliente excluído do banco."),
+          const SnackBar(
+            content: Text("✅ Cliente excluído com sucesso."),
             backgroundColor: Colors.green,
           ),
         );
-
         Navigator.pop(context, true);
       } else {
         throw Exception(data['mensagem'] ?? "Erro ao excluir");
@@ -370,10 +482,7 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
   }
 
 
-  // ===========================================================
-  // 🗑️ REMOVER DO CACHE OFFLINE
-  // ===========================================================
-  Future<void> _removerOffline(int id) async {
+  Future<void> _removerOffline(dynamic id) async {
     final prefs = await SharedPreferences.getInstance();
     final chave = "clientes_offline_${widget.empresaId}";
 
@@ -383,13 +492,43 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
     final json = jsonDecode(raw);
     final lista = List.from(json["clientes"]);
 
-    lista.removeWhere((c) => c["id"] == id);
+    lista.removeWhere((c) => c["id"].toString() == id.toString());
 
     await prefs.setString(
       chave,
       jsonEncode({"clientes": lista}),
     );
   }
+
+  Future<void> _adicionarExclusaoAFilaOffline(dynamic id) async {
+    final prefs = await SharedPreferences.getInstance();
+    final chaveFila = 'pedidos_pendentes_${widget.empresaId}';
+
+    final registro = {
+      'tipo': 'delete_cliente',
+      'dados': {
+        'id': id,
+        'empresa_id': widget.empresaId // 🔑 CORREÇÃO: Vincula empresa na exclusão
+      },
+      'timestamp': DateTime.now().toIso8601String(),
+    };
+
+    final fila = prefs.getStringList(chaveFila) ?? <String>[];
+
+    fila.removeWhere((raw) {
+      try {
+        final reg = jsonDecode(raw);
+        return (reg['tipo'] == 'update_cliente' || reg['tipo'] == 'novo_cliente')
+            && reg['dados']['id'].toString() == id.toString();
+      } catch (_) {
+        return false;
+      }
+    });
+
+    fila.add(jsonEncode(registro));
+    await prefs.setStringList(chaveFila, fila);
+  }
+
 
   // ===========================================================
   // UI
@@ -439,19 +578,18 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
             ),
             _campoTexto(razaoCtrl, "Razão Social"),
             _campoTexto(fantasiaCtrl, "Nome Fantasia"),
-            _campoTexto(telefoneCtrl, "Telefone",
-                teclado: TextInputType.phone),
-            _campoTexto(emailCtrl, "E-mail",
-                teclado: TextInputType.emailAddress),
+            _campoTexto(contatoCtrl, "Nome do Contato"),
+            _campoTexto(telefoneCtrl, "Telefone", teclado: TextInputType.phone),
+            _campoTexto(emailCtrl, "E-mail", teclado: TextInputType.emailAddress),
             _campoTexto(enderecoCtrl, "Endereço"),
             _campoTexto(bairroCtrl, "Bairro"),
             _campoTexto(cidadeCtrl, "Cidade"),
             _campoTexto(estadoCtrl, "Estado (UF)"),
             _campoTexto(cepCtrl, "CEP", teclado: TextInputType.number),
+            _campoTexto(obsCtrl, "Observação", maxLines: 3),
 
             const SizedBox(height: 22),
 
-            // BOTÃO SALVAR
             ElevatedButton.icon(
               icon: const Icon(Icons.save),
               label: enviando
@@ -475,7 +613,6 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
 
             if (editando) const SizedBox(height: 20),
 
-            // BOTÃO EXCLUIR
             if (editando)
               ElevatedButton.icon(
                 icon: const Icon(Icons.delete_forever),
@@ -496,20 +633,19 @@ class _CadastrarClienteScreenState extends State<CadastrarClienteScreen> {
     );
   }
 
-  // -----------------------------------------------------------
-  // WIDGET CUSTOMIZADO PARA CAMPOS
-  // -----------------------------------------------------------
   Widget _campoTexto(
       TextEditingController controller,
       String label, {
         TextInputType teclado = TextInputType.text,
         Widget? icone,
+        int maxLines = 1,
       }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: TextField(
         controller: controller,
         keyboardType: teclado,
+        maxLines: maxLines,
         decoration: InputDecoration(
           labelText: label,
           suffixIcon: icone,

@@ -1,11 +1,11 @@
 // =============================================================
-// 📋 TOOCA CRM - Pedidos Screen (v7.1 GOLD LIMPO)
+// 📋 TOOCA CRM - Pedidos Screen (v7.2 GOLD FIXED)
 // -------------------------------------------------------------
+// ✔ EXIBE NÚMERO SEQUENCIAL POR EMPRESA (Ex: Pedido #1)
 // ✔ SOMENTE PEDIDOS ONLINE
-// ✔ NÃO BLOQUEIA (Login e Sincronizar tratam isso)
+// ✔ BLOQUEIA TELA QUANDO OFFLINE
 // ✔ Consulta SaaS leve
 // ✔ Layout 100% mantido
-// ✔ Código simplificado (sem offline aqui)
 // =============================================================
 
 import 'dart:convert';
@@ -17,6 +17,8 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'dart:async'; // ← StreamSubscription
 
 import 'novo_pedido_screen.dart';
 import 'visualizar_pdf_screen.dart';
@@ -41,6 +43,9 @@ class PedidosScreen extends StatefulWidget {
 class _PedidosScreenState extends State<PedidosScreen> {
   List<Map<String, dynamic>> pedidos = [];
   bool carregando = true;
+
+  bool _isOnline = true;
+  StreamSubscription<ConnectivityResult>? _connSub;
 
   final NumberFormat _moeda =
   NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
@@ -68,7 +73,25 @@ class _PedidosScreenState extends State<PedidosScreen> {
   @override
   void initState() {
     super.initState();
+
+    _connSub =
+        Connectivity().onConnectivityChanged.listen((result) {
+          final online = result != ConnectivityResult.none;
+          if (mounted) setState(() => _isOnline = online);
+        });
+
+    Connectivity().checkConnectivity().then((result) {
+      final online = result != ConnectivityResult.none;
+      if (mounted) setState(() => _isOnline = online);
+    });
+
     _carregarPedidos();
+  }
+
+  @override
+  void dispose() {
+    _connSub?.cancel();
+    super.dispose();
   }
 
   // =============================================================
@@ -77,8 +100,7 @@ class _PedidosScreenState extends State<PedidosScreen> {
   Future<void> _carregarPedidos() async {
     setState(() => carregando = true);
 
-    // Atualiza status SaaS (não bloqueia)
-    await SincronizacaoService.consultarStatusEmpresa();
+    await SincronizacaoService.consultarStatusEmpresa(widget.empresaId);
 
     try {
       final response = await http.post(
@@ -96,7 +118,6 @@ class _PedidosScreenState extends State<PedidosScreen> {
       if (data['status'] == 'ok') {
         pedidos = List<Map<String, dynamic>>.from(data['pedidos']);
 
-        // Cache simples
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString(
           'pedidos_cache_${widget.empresaId}',
@@ -106,7 +127,6 @@ class _PedidosScreenState extends State<PedidosScreen> {
         pedidos = [];
       }
     } catch (e) {
-      // fallback cache
       final prefs = await SharedPreferences.getInstance();
       final cache = prefs.getString('pedidos_cache_${widget.empresaId}');
       if (cache != null) {
@@ -123,7 +143,8 @@ class _PedidosScreenState extends State<PedidosScreen> {
   // 📤 EXPORTAR EXCEL
   // =============================================================
   Future<void> exportarExcelDireto(Map<String, dynamic> pedido) async {
-    final pedidoId = pedido['id'].toString();
+    final pedidoId = pedido['id'].toString(); // ID Global para o Banco
+    final numeroVisual = (pedido['numero_pedido_empresa'] ?? pedidoId).toString();
 
     final url =
         "https://toocagroup.com.br/api/exportar_excel.php?pedido_id=$pedidoId&empresa_id=${widget.empresaId}";
@@ -132,24 +153,27 @@ class _PedidosScreenState extends State<PedidosScreen> {
     if (response.statusCode != 200) return;
 
     final dir = await getTemporaryDirectory();
-    final file = File("${dir.path}/Pedido_$pedidoId.xlsx");
+    final file = File("${dir.path}/Pedido_$numeroVisual.xlsx");
     await file.writeAsBytes(response.bodyBytes);
 
     await Share.shareXFiles(
       [XFile(file.path)],
-      text: "Pedido #$pedidoId - Excel (Tooca CRM)",
+      text: "Pedido #$numeroVisual - Excel (Tooca CRM)",
     );
   }
 
   // =============================================================
   // 🗑️ EXCLUIR PEDIDO
   // =============================================================
-  Future<void> excluirPedido(int pedidoId) async {
+  Future<void> excluirPedido(Map<String, dynamic> pedido) async {
+    final pedidoId = int.parse(pedido['id'].toString());
+    final numeroVisual = pedido['numero_pedido_empresa'] ?? pedidoId;
+
     final confirmar = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Excluir Pedido'),
-        content: Text("Deseja excluir o pedido #$pedidoId?"),
+        content: Text("Deseja excluir o pedido #$numeroVisual?"),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -217,16 +241,38 @@ class _PedidosScreenState extends State<PedidosScreen> {
   // =============================================================
   @override
   Widget build(BuildContext context) {
+
+    if (!_isOnline) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Pedidos', style: TextStyle(fontWeight: FontWeight.bold)),
+          backgroundColor: const Color(0xFFFFCC00),
+          foregroundColor: Colors.black,
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: const [
+                Icon(Icons.wifi_off, size: 72, color: Colors.grey),
+                SizedBox(height: 16),
+                Text('Você está sem internet', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                SizedBox(height: 8),
+                Text('Não é possível acessar pedidos sem conexão.', textAlign: TextAlign.center, style: TextStyle(color: Colors.black54)),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       appBar: AppBar(
-        title: const Text(
-          'Pedidos',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
+        title: const Text('Pedidos', style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: const Color(0xFFFFCC00),
         foregroundColor: Colors.black,
-
       ),
       body: carregando
           ? const Center(child: CircularProgressIndicator(color: Colors.amber))
@@ -239,11 +285,12 @@ class _PedidosScreenState extends State<PedidosScreen> {
           final p = pedidos[index];
           final total = parseValorHibrido(p['total'] ?? 0);
 
+          // 🔢 LÓGICA DO NÚMERO VISUAL (Prioriza o número da empresa)
+          final numeroExibicao = p['numero_pedido_empresa'] ?? p['id'];
+
           return Card(
             margin: const EdgeInsets.only(bottom: 16),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             elevation: 3,
             child: Padding(
               padding: const EdgeInsets.all(14),
@@ -251,11 +298,8 @@ class _PedidosScreenState extends State<PedidosScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    "Pedido #${p['id']}",
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 17,
-                    ),
+                    "Pedido #$numeroExibicao", // 🔥 MOSTRA 1, 2, 3...
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17),
                   ),
                   const SizedBox(height: 4),
                   Text("Cliente: ${p['cliente']}"),
@@ -272,22 +316,17 @@ class _PedidosScreenState extends State<PedidosScreen> {
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (_) =>
-                                      VisualizarPdfScreen(
-                                        pedidoId:
-                                        int.parse(p['id'].toString()),
-                                        usuarioId: widget.usuarioId,
-                                        empresaId: widget.empresaId,
-                                        plano: widget.plano,
-                                      ),
+                                  builder: (_) => VisualizarPdfScreen(
+                                    pedidoId: int.parse(p['id'].toString()), // ID Global para o PDF
+                                    usuarioId: widget.usuarioId,
+                                    empresaId: widget.empresaId,
+                                    plano: widget.plano,
+                                  ),
                                 ),
                               );
                             },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.yellow[700],
-                            ),
-                            child: const Text("PDF",
-                                style: TextStyle(fontSize: 11)),
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.yellow[700]),
+                            child: const Text("PDF", style: TextStyle(fontSize: 11)),
                           ),
                         ),
                       ),
@@ -296,13 +335,9 @@ class _PedidosScreenState extends State<PedidosScreen> {
                         child: SizedBox(
                           height: 38,
                           child: ElevatedButton(
-                            onPressed: () =>
-                                abrirEdicao({...p, 'forcar_master': true}),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.orange,
-                            ),
-                            child: const Text("EDITAR",
-                                style: TextStyle(fontSize: 11)),
+                            onPressed: () => abrirEdicao({...p, 'forcar_master': true}),
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                            child: const Text("EDITAR", style: TextStyle(fontSize: 11)),
                           ),
                         ),
                       ),
@@ -311,13 +346,9 @@ class _PedidosScreenState extends State<PedidosScreen> {
                         child: SizedBox(
                           height: 38,
                           child: ElevatedButton(
-                            onPressed: () => excluirPedido(
-                                int.parse(p['id'].toString())),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.red,
-                            ),
-                            child: const Text("EXCLUIR",
-                                style: TextStyle(fontSize: 11)),
+                            onPressed: () => excluirPedido(p),
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                            child: const Text("EXCLUIR", style: TextStyle(fontSize: 11)),
                           ),
                         ),
                       ),
@@ -326,13 +357,9 @@ class _PedidosScreenState extends State<PedidosScreen> {
                         child: SizedBox(
                           height: 38,
                           child: ElevatedButton(
-                            onPressed: () =>
-                                exportarExcelDireto(p),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.green,
-                            ),
-                            child: const Text("EXCEL",
-                                style: TextStyle(fontSize: 11)),
+                            onPressed: () => exportarExcelDireto(p),
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                            child: const Text("EXCEL", style: TextStyle(fontSize: 11)),
                           ),
                         ),
                       ),

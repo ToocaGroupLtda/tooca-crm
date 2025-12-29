@@ -23,6 +23,8 @@ void main() async {
 
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+
   ]);
 
   runApp(const MyApp());
@@ -36,9 +38,37 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  Widget _startScreen = const Center(
-    child: CircularProgressIndicator(color: Colors.black),
+  // NOVO: Tela de carregamento exibindo o nome Tooca CRM em fundo branco.
+  Widget _startScreen = const Scaffold(
+    backgroundColor: Colors.white,
+    body: Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          // Você pode colocar um Icon(Icons.business) ou o seu logo aqui!
+          Text(
+            'Tooca CRM',
+            style: TextStyle(
+              fontSize: 28,
+              fontWeight: FontWeight.bold,
+              color: Colors.black54, // Cor suave para o texto
+            ),
+          ),
+          SizedBox(height: 20),
+          // MANTEMOS UM INDICADOR SUTIL (opcional, mas recomendado)
+          SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: Color(0xFFFFC107), // Cor da marca (Amarelo)
+            ),
+          ),
+        ],
+      ),
+    ),
   );
+  // ...
 
   @override
   void initState() {
@@ -55,7 +85,7 @@ class _MyAppState extends State<MyApp> {
     int? usuarioId = prefs.getInt('usuario_id');
     int? empresaId = prefs.getInt('empresa_id');
     String email = prefs.getString('email') ?? '';
-    String planoUser = prefs.getString("plano_usuario") ?? "user";
+    String? planoEmpresa = prefs.getString("plano_empresa");
 
     // 🛑 Proteção anti-sessão corrompida → evita banco errado
     if (usuarioId == null || empresaId == null || usuarioId <= 0 || empresaId <= 0) {
@@ -76,9 +106,10 @@ class _MyAppState extends State<MyApp> {
       _startScreen = HomeScreen(
         usuarioId: usuarioId,
         empresaId: empresaId,
-        plano: planoUser,
+        plano: planoEmpresa ?? 'desconhecido',
         email: email,
       );
+
     });
   }
 

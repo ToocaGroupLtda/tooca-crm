@@ -43,3 +43,9 @@ flutter_launcher_icons:
   image_path: "assets/icon.png"
   min_sdk_android: 21
 
+  dependencies:
+    flutter:
+      sdk: flutter
+    url_launcher: ^6.2.2  # Use a versão estável mais recente
+    # ... outras dependências
+

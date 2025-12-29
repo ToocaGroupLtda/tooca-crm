@@ -10,6 +10,9 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
+
 
 // 💡 IMPORTS INTERNOS (sempre use o nome do pacote do pubspec.yaml)
 import 'package:app_tooca_crm/screens/sincronizacao_service.dart';
@@ -19,30 +22,30 @@ import 'package:app_tooca_crm/screens/home_screen.dart';
 
 class NovoPedidoScreen extends StatefulWidget {
   final int usuarioId;
-  final int empresaId;       // ✅ novo campo
-  final String plano;        // ✅ novo campo (ex: 'free' ou 'pro')
+  final int empresaId;
+  final String plano; // 🔒 sempre obrigatório
   final int? pedidoId;
   final bool isAdmin;
   final Map<String, dynamic>? pedidoRascunho;
   final int? filaIndex;
-  final Map<String, dynamic>? pedidoJson; // ✅ adiciona esse campo
-
+  final Map<String, dynamic>? pedidoJson;
 
   const NovoPedidoScreen({
     Key? key,
     required this.usuarioId,
     required this.empresaId,
-    required this.plano,
+    required this.plano, // 👈 plano vem de fora (API/login)
     this.pedidoId,
     this.isAdmin = false,
     this.pedidoRascunho,
     this.filaIndex,
-    this.pedidoJson, // ✅ adiciona aqui
+    this.pedidoJson,
   }) : super(key: key);
 
   @override
-  _NovoPedidoScreenState createState() => _NovoPedidoScreenState();
+  State<NovoPedidoScreen> createState() => _NovoPedidoScreenState();
 }
+
 
 class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
   String? _tabelaSelecionada;
@@ -50,6 +53,8 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
   bool _isOnline = true;
   late final bool _isEditingExisting;
   StreamSubscription<ConnectivityResult>? _connSub;
+  // 🔁 Debounce da busca de clientes (obrigatório)
+  Timer? _debounceBuscaCliente; // <--- ✅ JÁ EXISTE
 
   List<dynamic> clientes = [];
   /// 🔥 Índice acelerado de clientes (id → texto indexado)
@@ -71,6 +76,83 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
   final buscaCtrl = TextEditingController();
   final clienteBuscaCtrl = TextEditingController();
   List<dynamic> sugestoesClientes = [];
+  late String planoAtual;
+
+
+  // ===============================
+// 🔔 Overlay (Toast) de clientes
+// ===============================
+  OverlayEntry? _toastClientes;
+
+  // =======================================================
+// 🔔 TOAST CENTRAL — SUGESTÕES DE CLIENTE
+// =======================================================
+  void _mostrarToastClientes() {
+    if (_toastClientes != null) return;
+
+    _toastClientes = OverlayEntry(
+      builder: (context) => Positioned(
+        top: MediaQuery.of(context).size.height * 0.25,
+        left: 16,
+        right: 16,
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.25),
+                  blurRadius: 25,
+                  offset: const Offset(0, 12),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: sugestoesClientes.take(5).map((cliente) {
+                return ListTile(
+                  dense: true,
+                  title: Text(
+                    "${cliente['cnpj']} • ${cliente['nome']}",
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                  onTap: () {
+                    setState(() {
+                      clienteId =
+                          int.tryParse(cliente['id'].toString());
+                      clienteBuscaCtrl.text =
+                          cliente['nome'] ?? '';
+                      sugestoesClientes.clear();
+                    });
+                    _removerToastClientes();
+                    salvarRascunho();
+                  },
+                );
+              }).toList(),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    Overlay.of(context).insert(_toastClientes!);
+  }
+
+  void _removerToastClientes() {
+    _toastClientes?.remove();
+    _toastClientes = null;
+  }
+// 🔄 FORÇA ATUALIZAÇÃO DO TOAST A CADA LETRA
+  void _atualizarToastClientes() {
+    _toastClientes?.remove();
+    _toastClientes = null;
+    _mostrarToastClientes();
+  }
+
+
 
   // --------- Helpers de busca ----------
   String _onlyDigits(String? s) => (s ?? '').replaceAll(RegExp(r'\D'), '');
@@ -122,7 +204,12 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
   void initState() {
     super.initState();
 
-    _isEditingExisting = (widget.pedidoId != null);
+    // 🔐 PLANO DEFINITIVO DA TELA (UMA ÚNICA VEZ)
+    planoAtual = widget.plano.toLowerCase().trim();
+
+    debugPrint('🧾 PLANO FINAL USADO NA TELA => $planoAtual');
+
+    _isEditingExisting = widget.pedidoId != null;
 
     _connSub = Connectivity().onConnectivityChanged.listen((result) {
       final online = (result != ConnectivityResult.none);
@@ -136,9 +223,9 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
       if (mounted) setState(() => _isOnline = online);
     });
 
-
     carregarDadosOffline();
   }
+
 
   Future<void> _limparRascunhoSeInvalido() async {
     final prefs = await SharedPreferences.getInstance();
@@ -168,10 +255,12 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
 
   @override
   void dispose() {
+    _debounceBuscaCliente?.cancel(); // 🔥 evita memory leak
     _connSub?.cancel();
     obsCtrl.dispose();
     buscaCtrl.dispose();
     clienteBuscaCtrl.dispose();
+    _removerToastClientes();
     super.dispose();
   }
 
@@ -204,7 +293,7 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
     if (condicoes.isEmpty && _isOnline) {
       try {
         final url = Uri.parse(
-            'https://toocagroup.com.br/api/listar_condicoes.php?empresa_id=${widget.empresaId}&usuario_id=${widget.usuarioId}&plano=${widget.plano}'
+            'https://toocagroup.com.br/api/listar_condicoes.php?empresa_id=${widget.empresaId}&usuario_id=${widget.usuarioId}&plano=$planoAtual'
         );
         final res = await http.get(url);
         final data = jsonDecode(res.body);
@@ -335,7 +424,8 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
             'pedido_id': pedidoId,
             'empresa_id': widget.empresaId,
             'usuario_id': widget.usuarioId,
-            'plano': widget.plano,
+            'plano': planoAtual,
+
           }),
         );
 
@@ -581,40 +671,50 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
 
 
 // =======================================================
-// 🔥 NOVA FUNÇÃO — SUPER RÁPIDA (pré-indexação + loop controlado)
+// ⚡ BUSCA DE CLIENTES OFFLINE — ULTRA RÁPIDA (SEM DEBOUNCE)
 // =======================================================
   void buscarClientesOffline(String termo) {
     final raw = termo.trim();
-    final query = _norm(raw);
 
-    // Se vazio → limpa sugestões
-    if (query.isEmpty) {
-      setState(() => sugestoesClientes = []);
+    // 🔥 Campo vazio → mostra primeiros 30 imediatamente
+    if (raw.isEmpty) {
+      if (sugestoesClientes.length != 30) {
+        setState(() {
+          sugestoesClientes = clientes.take(30).toList();
+        });
+      }
       return;
     }
 
-    // O usuário está digitando números?
-    final isNumero = RegExp(r'^\d+$').hasMatch(raw.replaceAll(RegExp(r'\D'), ''));
+    final query = _norm(raw);
+    final somenteNumeros = _onlyDigits(raw);
+    final isNumero = somenteNumeros.isNotEmpty;
 
-    final resultados = <dynamic>[];
+    final List<dynamic> resultados = [];
 
-    // 🔥 Varre rapidamente a lista já indexada
+    // 🔥 LOOP SUPER LEVE (em memória)
     for (final cli in clientes) {
       final id = int.tryParse('${cli['id']}') ?? 0;
       final idx = clientesIndexados[id] ?? '';
 
       if (isNumero) {
-        final qd = _onlyDigits(raw);
-        if (qd.isNotEmpty && idx.contains(qd)) resultados.add(cli);
+        if (idx.contains(somenteNumeros)) {
+          resultados.add(cli);
+        }
       } else {
-        if (idx.contains(query)) resultados.add(cli);
+        if (idx.contains(query)) {
+          resultados.add(cli);
+        }
       }
 
-      // 🔥 Para com 50 resultados → instantâneo!
-      if (resultados.length >= 50) break;
+      // 🔒 Limite para UX e performance
+      if (resultados.length == 50) break;
     }
 
-    setState(() => sugestoesClientes = resultados);
+    // ✅ CORREÇÃO APLICADA: Força o rebuild após o debounce (remove o if desnecessário)
+    setState(() {
+      sugestoesClientes = resultados;
+    });
   }
 
 
@@ -677,7 +777,8 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
 
     final dados = {
       'empresa_id': widget.empresaId,
-      'plano': widget.plano,
+      'plano': planoAtual
+      ,
       'usuario_id': widget.usuarioId,
       'cliente_id': clienteId,
       'cliente_nome': clienteNomeSelecionado,
@@ -727,7 +828,8 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
         builder: (_) => HomeScreen(
           usuarioId: widget.usuarioId,
           empresaId: widget.empresaId,
-          plano: widget.plano,
+          plano: planoAtual,
+
           email: '',
         ),
       ),
@@ -807,6 +909,62 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
     return total;
   }
 
+// =======================================================
+// 📸 FOTO OFFLINE — baixa e salva localmente
+// =======================================================
+  Future<File> _arquivoFotoLocal(String codigo) async {
+    final dir = await getApplicationDocumentsDirectory();
+    final pasta = Directory('${dir.path}/produtos');
+
+    if (!await pasta.exists()) {
+      await pasta.create(recursive: true);
+    }
+
+    return File('${pasta.path}/$codigo.jpg');
+  }
+
+  Future<File?> baixarFotoProduto(String codigo) async {
+    try {
+      final arquivo = await _arquivoFotoLocal(codigo);
+
+      if (await arquivo.exists()) return arquivo;
+      if (!_isOnline) return null;
+
+      final url = 'https://toocagroup.com.br/uploads/produtos/$codigo.jpg';
+      final res = await http.get(Uri.parse(url));
+
+      if (res.statusCode == 200 && res.bodyBytes.isNotEmpty) {
+        await arquivo.writeAsBytes(res.bodyBytes);
+        return arquivo;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  void abrirFotoOffline(String codigo) async {
+    final arquivo = await baixarFotoProduto(codigo);
+
+    if (arquivo == null || !await arquivo.exists()) {
+      showDialog(
+        context: context,
+        builder: (_) => const AlertDialog(
+          content: Text('Este produto não possui foto disponível offline.'),
+        ),
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.black,
+        child: InteractiveViewer(
+          child: Image.file(arquivo, fit: BoxFit.contain),
+        ),
+      ),
+    );
+  }
+
 
   void aplicarDescontoGeral() {
     setState(() {
@@ -868,11 +1026,38 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: Text(
-          isEdit
-              ? '${item!['codigo']} - ${item['nome']}'
-              : '${produto?['codigo']} - ${produto?['nome']}',
+        // 🏆 TÍTULO MODIFICADO PARA INCLUIR O BOTÃO DE FOTO
+        title: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Expanded(
+              child: Text(
+                isEdit
+                    ? '${item!['codigo']} - ${item['nome']}'
+                    : '${produto?['codigo']} - ${produto?['nome']}',
+                style: const TextStyle(fontSize: 16),
+              ),
+            ),
+
+            // 📸 NOVO: Ícone para abrir a foto no popup
+            IconButton(
+              icon: const Icon(Icons.camera_alt_outlined, color: Colors.blue),
+              onPressed: () {
+                final codigo = isEdit ? item!['codigo'] : produto!['codigo'];
+                if (codigo != null) {
+                  // Abre a foto usando o código do item/produto
+                  abrirFotoOffline(codigo.toString());
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Código do produto indisponível.')),
+                  );
+                }
+              },
+              tooltip: 'Ver Foto do Produto',
+            ),
+          ],
         ),
+        // -----------------------------------------------------------------
         content: StatefulBuilder(
           builder: (context, setStateDialog) {
             void atualizarPreco() {
@@ -894,6 +1079,13 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
                   controller: precoCtrl,
                   decoration: const InputDecoration(labelText: 'Preço'),
                   keyboardType: TextInputType.number,
+                  // 🔥 CORREÇÃO 1: Limpa o desconto visualmente se o preço for alterado.
+                  onChanged: (v) {
+                    setStateDialog(() {
+                      // Se o preço é digitado, o desconto é limpo no campo de %
+                      if (v.isNotEmpty) descCtrl.clear();
+                    });
+                  },
                 ),
                 TextField(
                   controller: descCtrl,
@@ -911,11 +1103,38 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFCC00), foregroundColor: Colors.black),
             onPressed: () {
               final qtd  = double.tryParse(qtdCtrl.text.replaceAll(',', '.')) ?? 1;
-              final desc = (double.tryParse(descCtrl.text.replaceAll(',', '.')) ?? 0).clamp(0.0, 100.0);
 
-              // Sempre derive o preço final do preco_base (definido acima no abrirPopupItem)
+              // Base SEMPRE a original da tabela.
               final double base = precoBase; // <- vem do bloco inicial do abrirPopupItem
-              final double precoFinal = base * (1 - (desc / 100));
+
+              // 🔥 CORREÇÃO 2: Prioriza o preço digitado (precoCtrl) e recalcula o desconto
+              final double precoDigitado = double.tryParse(precoCtrl.text.replaceAll(',', '.')) ?? 0.0;
+              final double descDigitado = (double.tryParse(descCtrl.text.replaceAll(',', '.')) ?? 0).clamp(0.0, 100.0);
+              final double precoCalculadoPorDesc = base * (1 - (descDigitado / 100));
+
+              final double precoFinal;
+              final double desc;
+
+              if (base <= 0.0) {
+                // Se não há preço base, usamos o preço digitado e o desconto é 0.
+                precoFinal = precoDigitado;
+                desc = 0.0;
+              } else if ((precoDigitado - precoCalculadoPorDesc).abs() > 0.01) {
+                // O preço digitado manualmente prevaleceu sobre o cálculo do desconto
+                precoFinal = precoDigitado;
+                if (precoFinal >= base) {
+                  desc = 0.0; // Evita desconto negativo
+                } else {
+                  // Recalcula o desconto percentual
+                  desc = ((base - precoFinal) / base * 100).clamp(0.0, 100.0);
+                }
+              } else {
+                // O preço digitado é igual ou próximo ao preço calculado pelo desconto.
+                // Usamos o cálculo do desconto para maior precisão.
+                desc = descDigitado;
+                precoFinal = precoCalculadoPorDesc;
+              }
+
 
               final novoItem = {
                 'produto_id': isEdit
@@ -924,9 +1143,9 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
                 'nome'      : isEdit ? item!['nome']   : (produto!['nome']   ?? ''),
                 'codigo'    : isEdit ? item!['codigo'] : (produto!['codigo'] ?? 'SN'),
                 'qtd'       : qtd,
-                'preco_base': isEdit ? (item!['preco_base'] ?? base) : base,
-                'preco'     : double.parse(precoFinal.toStringAsFixed(2)),
-                'desconto'  : desc,
+                'preco_base': base, // Mantém a base original
+                'preco'     : double.parse(precoFinal.toStringAsFixed(2)), // Salva o preço final (digitado ou calculado)
+                'desconto'  : double.parse(desc.toStringAsFixed(2)), // Salva o desconto (digitado ou recalculado)
               };
 
               // Se for novo item e não tiver produto_id → erro
@@ -1005,7 +1224,8 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
     final dados = {
       'pedido_id': widget.pedidoId,
       'empresa_id': widget.empresaId, // 🔥 faltava
-      'plano': widget.plano,          // 🔥 faltava
+      'plano': planoAtual
+      ,          // 🔥 faltava
       'usuario_id': widget.usuarioId,
 
       'cliente_id': clienteId,
@@ -1046,7 +1266,8 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
         builder: (_) => HomeScreen(
           usuarioId: widget.usuarioId,
           empresaId: widget.empresaId,
-          plano: widget.plano,
+          plano: planoAtual
+          ,
           email: '',
         ),
       ),
@@ -1067,7 +1288,8 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
     }
 
     // 🔒 Limite plano Free
-    if (widget.plano == 'free' && itens.length > 5) {
+    if (planoAtual == 'free' && itens.length > 5) {
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Plano Free permite até 5 itens por pedido.')),
       );
@@ -1172,7 +1394,8 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
             builder: (_) => HomeScreen(
               usuarioId: widget.usuarioId,
               empresaId: widget.empresaId,
-              plano: widget.plano,
+              plano: planoAtual
+              ,
               email: '',
             ),
           ),
@@ -1232,6 +1455,56 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
         : double.tryParse(valor.toString()) ?? 0;
 
     return (d % 1 == 0) ? d.toInt().toString() : d.toString();
+  }
+
+  // =======================================================
+// 🆕 FUNÇÃO PARA ABRIR O POPUP DE OBSERVAÇÃO (NOVO)
+// =======================================================
+  void _abrirPopupObservacao() {
+    // Cria um controller temporário para que o texto não seja atualizado
+    // no controller principal (obsCtrl) enquanto o usuário digita no popup.
+    final tempCtrl = TextEditingController(text: obsCtrl.text);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('📝 Observação do Pedido'),
+        content: SizedBox( // Limita a altura do conteúdo do diálogo
+          width: double.maxFinite,
+          child: TextField(
+            controller: tempCtrl,
+            keyboardType: TextInputType.multiline,
+            maxLines: 10, // Permite 10 linhas visíveis no popup
+            decoration: const InputDecoration(
+              hintText: 'Digite a observação completa aqui...',
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFFFCC00),
+              foregroundColor: Colors.black,
+            ),
+            onPressed: () {
+              // 1. Atualiza o controller principal (obsCtrl)
+              setState(() {
+                obsCtrl.text = tempCtrl.text.trim();
+              });
+              // 2. Salva o rascunho
+              salvarRascunho();
+              Navigator.pop(ctx);
+            },
+            child: const Text('Salvar'),
+          ),
+        ],
+      ),
+    );
   }
 
 // =================================================================
@@ -1407,7 +1680,26 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
                             ),
                             isDense: true,
                           ),
-                          onChanged: buscarClientesOffline,
+                          // ✅ DEBOUNCE IMPLEMENTADO AQUI
+                          onChanged: (valor) {
+                            // 1. Cancela o timer anterior (se existir)
+                            _debounceBuscaCliente?.cancel();
+
+                            // 2. Inicia um novo timer de 300ms
+                            _debounceBuscaCliente = Timer(const Duration(milliseconds: 300), () {
+                              // 3. Executa a busca e o setState APENAS depois do delay
+                              buscarClientesOffline(valor);
+
+                              // 4. Garante que o toast é mostrado/removido no final
+                              if (sugestoesClientes.isNotEmpty) {
+                                _atualizarToastClientes();
+
+                              } else {
+                                _removerToastClientes();
+                              }
+                            });
+                          },
+
                         ),
                       ],
                     ),
@@ -1474,14 +1766,29 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
 
                   const SizedBox(height: 8),
 
-                  // OBSERVAÇÃO
-                  TextField(
-                    controller: obsCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Observação (opcional)',
-                      isDense: true,
+                  // OBSERVAÇÃO (AGORA COM POPUP E APENAS 1 LINHA VISÍVEL)
+                  InkWell(
+                    onTap: _abrirPopupObservacao,
+                    child: InputDecorator(
+                      decoration: const InputDecoration(
+                        labelText: 'Observação (opcional)',
+                        suffixIcon: Icon(Icons.edit_note, color: Colors.black54),
+                        isDense: true,
+                        contentPadding: EdgeInsets.fromLTRB(12, 10, 8, 10), // Ajusta o padding para ser mais compacto
+                      ),
+                      isEmpty: obsCtrl.text.isEmpty,
+                      child: Text(
+                        obsCtrl.text.isEmpty
+                            ? ''
+                            : obsCtrl.text,
+                        maxLines: 1, // <--- 🔑 ALTERADO PARA EXIBIR APENAS 1 LINHA
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: obsCtrl.text.isEmpty ? Colors.grey.shade700 : Colors.black,
+                        ),
+                      ),
                     ),
-                    onChanged: (_) => salvarRascunho(),
                   ),
 
                   const SizedBox(height: 8),
@@ -1518,32 +1825,7 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
                 slivers: [
 
 
-                  // 2️⃣ SUGESTÕES DE CLIENTES
-                  if (sugestoesClientes.isNotEmpty)
-                    SliverList(
-                      delegate: SliverChildListDelegate(
-                        sugestoesClientes.take(5).map((cliente) {
-                          return ListTile(
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-                            dense: true,
-                            tileColor: Colors.white,
 
-                            title: Text(
-                              "${cliente['cnpj']} • ${cliente['nome']}",
-                              style: const TextStyle(fontSize: 14),
-                            ),
-                            onTap: () {
-                              setState(() {
-                                clienteId = int.tryParse(cliente['id'].toString());
-                                clienteBuscaCtrl.text = cliente['nome'] ?? '';
-                                sugestoesClientes.clear();
-                              });
-                              salvarRascunho();
-                            },
-                          );
-                        }).toList(),
-                      ),
-                    ),
 
                   // 3️⃣ SUGESTÕES DE PRODUTOS
                   if (produtosFiltrados.isNotEmpty)
@@ -1671,6 +1953,7 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
                                   // QTD
                                   Text("Qtd: ${item['qtd']}"),
 
+
                                   // UNITÁRIO
                                   Container(
                                     padding: const EdgeInsets.symmetric(
@@ -1718,18 +2001,110 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
                                       color: Colors.green,
                                     ),
                                   ),
+
+
+
+
                                 ],
                               ),
 
                               onTap: () => abrirPopupItem(index: i),
 
-                              trailing: IconButton(
-                                icon: const Icon(Icons.delete, color: Colors.red),
-                                onPressed: () {
-                                  setState(() => itens.removeAt(i));
-                                  salvarRascunho();
-                                },
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+
+                                  GestureDetector(
+                                    onTap: () => abrirFotoOffline(item['codigo']),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(10),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.black.withOpacity(0.08),
+                                            blurRadius: 6,
+                                            offset: const Offset(0, 3),
+                                          ),
+                                        ],
+                                        border: Border.all(
+                                          color: Colors.blue.shade200,
+                                          width: 1,
+                                        ),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: const [
+                                          Icon(
+                                            Icons.photo_camera_outlined,
+                                            size: 18,
+                                            color: Colors.blue,
+                                          ),
+                                          SizedBox(width: 6),
+                                          Text(
+                                            'Foto',
+                                            style: TextStyle(
+                                              color: Colors.blue,
+                                              fontWeight: FontWeight.w600,
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+
+
+                                  // 👉 ESPAÇO EXTRA ENTRE FOTO E EXCLUIR
+                                  const SizedBox(width: 14),
+
+                                  // 🗑️ EXCLUIR (COM CONFIRMAÇÃO)
+                                  IconButton(
+                                    icon: const Icon(Icons.delete, color: Colors.red),
+                                    onPressed: () {
+                                      // 💡 NOVO: Mostrar caixa de diálogo de confirmação
+                                      showDialog(
+                                        context: context,
+                                        builder: (ctx) => AlertDialog(
+                                          title: const Text('⚠️ Confirmar Exclusão'),
+                                          content: Text('Tem certeza que deseja remover o item "${item['codigo']} - ${item['nome']}" do pedido?'),
+                                          actions: [
+                                            TextButton(
+                                              onPressed: () => Navigator.pop(ctx, false), // Não exclui
+                                              child: const Text('Cancelar'),
+                                            ),
+                                            ElevatedButton(
+                                              style: ElevatedButton.styleFrom(
+                                                backgroundColor: Colors.red, // Cor de destaque para Ação Perigosa
+                                                foregroundColor: Colors.white,
+                                              ),
+                                              onPressed: () {
+                                                Navigator.pop(ctx, true); // Fecha o diálogo
+
+                                                // 1. Exclui o item DE FATO
+                                                setState(() => itens.removeAt(i));
+
+                                                // 2. Salva o rascunho
+                                                salvarRascunho();
+
+                                                // 3. Feedback visual (opcional)
+                                                ScaffoldMessenger.of(context).showSnackBar(
+                                                  const SnackBar(
+                                                    content: Text('Item removido com sucesso.'),
+                                                  ),
+                                                );
+                                              },
+                                              child: const Text('Excluir'),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ],
                               ),
+
                             ),
                             const Padding(
                               padding: EdgeInsets.symmetric(horizontal: 12),

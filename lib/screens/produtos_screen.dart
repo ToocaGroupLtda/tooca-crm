@@ -49,12 +49,21 @@ class _ProdutosScreenState extends State<ProdutosScreen> {
 // 🔄 Carregar sem bloqueio (Produtos nunca bloqueia)
 // ============================================================
   Future<void> _validarAntesDeCarregar() async {
+    final prefs = await SharedPreferences.getInstance();
+    final empresaId = prefs.getInt('empresa_id') ?? 0;
+
+    if (empresaId <= 0) {
+      debugPrint("❌ ProdutosScreen: empresa_id não encontrado");
+      return;
+    }
+
     // Atualiza status online (mas NÃO bloqueia)
-    await SincronizacaoService.consultarStatusEmpresa();
+    await SincronizacaoService.consultarStatusEmpresa(empresaId);
 
     // Sempre tenta carregar produtos
     await carregarProdutos();
   }
+
 
 
   // ============================================================

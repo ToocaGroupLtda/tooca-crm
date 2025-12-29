@@ -66,9 +66,17 @@ class _SincronizarScreenState extends State<SincronizarScreen> {
   // 🌐 VERIFICA STATUS DO SERVIDOR → DEPOIS BLOQUEIO
   // =============================================================
   Future<void> _verificarStatusInicial() async {
-    await SincronizacaoService.consultarStatusEmpresa();
-
     final prefs = await SharedPreferences.getInstance();
+
+    final empresaId = prefs.getInt('empresa_id') ?? 0;
+
+    if (empresaId <= 0) {
+      debugPrint("❌ empresa_id não encontrado no storage");
+      return;
+    }
+
+    await SincronizacaoService.consultarStatusEmpresa(empresaId);
+
     planoEmpresa = prefs.getString('plano_empresa') ?? 'free';
     empresaExpira = prefs.getString('empresa_expira') ?? '';
 
