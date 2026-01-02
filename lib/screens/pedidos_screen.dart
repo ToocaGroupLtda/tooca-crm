@@ -100,6 +100,9 @@ class _PedidosScreenState extends State<PedidosScreen> {
   Future<void> _carregarPedidos() async {
     setState(() => carregando = true);
 
+    debugPrint('🚨 PASSO 1 -> empresa_id ENVIADO: ${widget.empresaId}');
+    debugPrint('🚨 PASSO 1 -> usuario_id ENVIADO: ${widget.usuarioId}');
+
     await SincronizacaoService.consultarStatusEmpresa(widget.empresaId);
 
     try {
@@ -113,7 +116,12 @@ class _PedidosScreenState extends State<PedidosScreen> {
         }),
       );
 
+
       final data = jsonDecode(response.body);
+
+      debugPrint('🚨 PASSO 2 -> RESPONSE RAW: ${response.body}');
+      debugPrint('🚨 PASSO 2 -> QTD PEDIDOS: ${data['pedidos']?.length}');
+
 
       if (data['status'] == 'ok') {
         pedidos = List<Map<String, dynamic>>.from(data['pedidos']);

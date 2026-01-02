@@ -49,6 +49,20 @@ class _PedidosOfflineScreenState extends State<PedidosOfflineScreen> {
       final Map<String, dynamic> dados =
       temTipo ? Map<String, dynamic>.from(reg['dados'] ?? {}) : Map<String, dynamic>.from(reg);
 
+      // 🔒 NORMALIZA PEDIDOS ANTIGOS (RECUPERA PERDIDOS)
+      dados['usuario_id'] ??= widget.usuarioId;
+      dados['empresa_id'] ??= widget.empresaId;
+
+// 🔄 Garante estrutura nova (tipo + dados)
+      if (!temTipo) {
+        reg.clear();
+        reg.addAll({
+          'tipo': 'novo',
+          'dados': dados,
+        });
+      }
+
+
       // 🔢 Calcula total se não vier pronto
       double total = 0.0;
       if (dados['total'] != null) {
@@ -64,6 +78,8 @@ class _PedidosOfflineScreenState extends State<PedidosOfflineScreen> {
 
       return {
         'raw': raw,
+        'dados': dados,
+
         'tipo': temTipo ? (reg['tipo'] ?? 'novo') : 'novo',
         'pedido_id': temTipo ? reg['pedido_id'] : null,
         'cliente_nome': (dados['cliente_nome'] ?? 'Cliente Offline').toString(),
@@ -81,10 +97,17 @@ class _PedidosOfflineScreenState extends State<PedidosOfflineScreen> {
   Future<void> _remover(String rawJson) async {
     final prefs = await SharedPreferences.getInstance();
     final fila = prefs.getStringList(_chaveFila) ?? <String>[];
+
     fila.remove(rawJson);
     await prefs.setStringList(_chaveFila, fila);
-    setState(() => _future = _carregarPendentes());
+
+    // 🔥 setState SEM async
+    if (!mounted) return;
+    setState(() {
+      _future = _carregarPendentes();
+    });
   }
+
 
   // ===========================================================
   // 🔄 SINCRONIZAR AGORA
@@ -102,19 +125,8 @@ class _PedidosOfflineScreenState extends State<PedidosOfflineScreen> {
   // ✏️ EDITAR PEDIDO OFFLINE
   // ===========================================================
   void _editar(Map<String, dynamic> pedido, int filaIndex) {
-    final raw = pedido['dados'];
-    Map<String, dynamic> dados = {};
-
-    if (raw is Map) {
-      dados = raw.map((k, v) => MapEntry(k.toString(), v));
-    } else if (raw is String) {
-      try {
-        final dec = jsonDecode(raw);
-        if (dec is Map) {
-          dados = dec.map((k, v) => MapEntry(k.toString(), v));
-        }
-      } catch (_) {}
-    }
+    final Map<String, dynamic> dados =
+    Map<String, dynamic>.from(pedido['dados'] ?? {});
 
     if (dados.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -162,14 +174,15 @@ class _PedidosOfflineScreenState extends State<PedidosOfflineScreen> {
         builder: (_) => NovoPedidoScreen(
           usuarioId: widget.usuarioId,
           empresaId: widget.empresaId,
-          plano: 'free', // mantém
-          pedidoId: null,
+          plano: 'free',
+          pedidoId: pedido['pedido_id'], // ✅ ID REAL
           isAdmin: false,
           pedidoRascunho: dados,
           filaIndex: filaIndex,
         ),
       ),
     );
+
   }
 
 
@@ -177,7 +190,8 @@ class _PedidosOfflineScreenState extends State<PedidosOfflineScreen> {
   // 👁️ VISUALIZAR OFFLINE
   // ===========================================================
   void _visualizarOffline(Map<String, dynamic> pedido) {
-    final raw = pedido['dados'];
+    final raw = pedido['raw'];
+
     Map<String, dynamic> dados = {};
 
     if (raw is Map) {

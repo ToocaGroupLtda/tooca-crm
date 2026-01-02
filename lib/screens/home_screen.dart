@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 
 import 'login_screen.dart';
 import 'novo_pedido_screen.dart';
@@ -32,8 +33,10 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   late String planoAtual;
   String? empresaExpira;
+  String empresaStatus = 'ativo';
 
-  bool mostrarStatusEmpresa = false; // 👈 CONTROLE DO CARD
+  bool mostrarStatusEmpresa = false;
+  bool _isOnline = true;
 
   List<dynamic> ultimosPedidos = [];
   List<dynamic> pedidosRascunho = [];
@@ -47,36 +50,61 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
 
-    planoAtual = widget.plano.toLowerCase().trim();
-    _carregarPlanoReal();
+    _carregarStatusEmpresa();
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _executarSincronizacaoInicial();
+    // 🔥 Detecta conexão ANTES de qualquer chamada remota
+    Connectivity().checkConnectivity().then((result) {
+      _isOnline = result != ConnectivityResult.none;
+
+      if (_isOnline) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _executarSincronizacaoInicial();
+        });
+      } else {
+        debugPrint('📴 HomeScreen offline: sincronização ignorada');
+        carregarUltimosPedidos(); // carrega cache local
+      }
+    });
+
+    // 🔁 Escuta mudanças de conexão
+    Connectivity().onConnectivityChanged.listen((result) {
+      final online = result != ConnectivityResult.none;
+      if (mounted && online != _isOnline) {
+        setState(() => _isOnline = online);
+
+        if (online) {
+          debugPrint('🌐 Conexão restaurada, sincronizando...');
+          _executarSincronizacaoInicial();
+        }
+      }
     });
   }
 
   // =============================================================
-  // 🔐 Carrega plano REAL da empresa
+  // 🔐 STATUS DA EMPRESA (LOCAL)
   // =============================================================
-  Future<void> _carregarPlanoReal() async {
+  Future<void> _carregarStatusEmpresa() async {
     final prefs = await SharedPreferences.getInstance();
-    final planoPrefs = prefs.getString('plano_empresa');
-    final expiraPrefs = prefs.getString('empresa_expira');
-
-    if (!mounted) return;
 
     setState(() {
-      if (planoPrefs != null && planoPrefs.isNotEmpty) {
-        planoAtual = planoPrefs.toLowerCase().trim();
-      }
-      empresaExpira = expiraPrefs;
+      planoAtual = (prefs.getString('plano') ?? widget.plano)
+          .toLowerCase()
+          .trim();
+
+      empresaExpira = prefs.getString('plano_expira_em');
+      empresaStatus = prefs.getString('empresa_status') ?? 'ativo';
     });
   }
 
   // =============================================================
-  // 🔄 SINCRONIZAÇÃO
+  // 🔄 SINCRONIZAÇÃO (BLINDADA)
   // =============================================================
   Future<void> _executarSincronizacaoInicial() async {
+    if (!_isOnline) {
+      debugPrint('📴 Offline: sincronização cancelada');
+      return;
+    }
+
     final ativa =
     await SincronizacaoService.consultarStatusEmpresa(widget.empresaId);
 
@@ -97,45 +125,45 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (!mounted) return;
 
-    // 👇 MOSTRA O CARD
-    setState(() {
-      mostrarStatusEmpresa = true;
-    });
+    setState(() => mostrarStatusEmpresa = true);
 
-    // 👇 ESCONDE AUTOMATICAMENTE
     Future.delayed(const Duration(seconds: 6), () {
       if (!mounted) return;
-      setState(() {
-        mostrarStatusEmpresa = false;
-      });
+      setState(() => mostrarStatusEmpresa = false);
     });
   }
 
   // =============================================================
-  // 📦 Últimos pedidos
+  // 📦 ÚLTIMOS PEDIDOS (ONLINE COM FALLBACK OFFLINE)
   // =============================================================
   Future<void> carregarUltimosPedidos() async {
-    final url = Uri.parse(
-        'https://toocagroup.com.br/api/listar_pedidos_faturados.php');
-
     final cachePedidos = 'pedidos_faturados_${widget.empresaId}';
     final cacheRascunhos = 'pedidos_rascunho_${widget.empresaId}';
+    final prefs = await SharedPreferences.getInstance();
+
+    if (!_isOnline) {
+      setState(() {
+        ultimosPedidos = jsonDecode(prefs.getString(cachePedidos) ?? '[]');
+        pedidosRascunho =
+            jsonDecode(prefs.getString(cacheRascunhos) ?? '[]');
+        carregandoPedidos = false;
+      });
+      return;
+    }
 
     try {
-      final response = await http
-          .post(
-        url,
+      final response = await http.post(
+        Uri.parse(
+            'https://toocagroup.com.br/api/listar_pedidos_faturados.php'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'usuario_id': widget.usuarioId,
           'empresa_id': widget.empresaId,
         }),
-      )
-          .timeout(const Duration(seconds: 10));
+      );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final prefs = await SharedPreferences.getInstance();
 
         await prefs.setString(
             cachePedidos, jsonEncode(data['pedidos'] ?? []));
@@ -151,9 +179,6 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
     } catch (_) {
-      final prefs = await SharedPreferences.getInstance();
-      if (!mounted) return;
-
       setState(() {
         ultimosPedidos = jsonDecode(prefs.getString(cachePedidos) ?? '[]');
         pedidosRascunho =
@@ -170,13 +195,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // =============================================================
-  // 🎨 STATUS DA EMPRESA
+  // 🎨 STATUS EMPRESA
   // =============================================================
   Color _corStatusEmpresa() {
-    if (planoAtual == 'free') return Colors.red;
+    if (empresaStatus != 'ativo') return Colors.red;
 
     if (empresaExpira == null || empresaExpira!.isEmpty) {
-      return Colors.orange;
+      return Colors.green;
     }
 
     try {
@@ -191,9 +216,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // =============================================================
-  // 🏢 CARD DE STATUS (DISCRETO)
-  // =============================================================
   Widget _avisoEmpresa() {
     return Center(
       child: Container(
@@ -203,7 +225,7 @@ class _HomeScreenState extends State<HomeScreen> {
         decoration: BoxDecoration(
           color: _corStatusEmpresa().withOpacity(0.1),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: _corStatusEmpresa(), width: 1),
+          border: Border.all(color: _corStatusEmpresa()),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -215,27 +237,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 fontWeight: FontWeight.bold,
                 color: _corStatusEmpresa(),
               ),
-              textAlign: TextAlign.center,
             ),
             const SizedBox(height: 2),
             Text(
               empresaExpira != null && empresaExpira!.isNotEmpty
                   ? 'Vence em $empresaExpira'
-                  : 'Vencimento não informado',
-              style: const TextStyle(
-                fontSize: 11,
-                color: Colors.black54,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Empresa ID: ${widget.empresaId} • Usuário ID: ${widget.usuarioId}',
-              style: const TextStyle(
-                fontSize: 10,
-                color: Colors.black45,
-              ),
-              textAlign: TextAlign.center,
+                  : 'Sem vencimento',
+              style: const TextStyle(fontSize: 11, color: Colors.black54),
             ),
           ],
         ),
@@ -248,7 +256,7 @@ class _HomeScreenState extends State<HomeScreen> {
   // =============================================================
   @override
   Widget build(BuildContext context) {
-    final List<Map<String, dynamic>> menu = [
+    final menu = [
       {
         'icon': Icons.add_box,
         'label': 'Novo Pedido',
@@ -297,7 +305,6 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: () async {
               final prefs = await SharedPreferences.getInstance();
               await prefs.clear();
-
               if (!mounted) return;
               Navigator.pushAndRemoveUntil(
                 context,
@@ -365,8 +372,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
             ),
-
-            // 👇 APARECE SÓ QUANDO SINCRONIZA
             if (mostrarStatusEmpresa) _avisoEmpresa(),
           ],
         ),
@@ -376,7 +381,7 @@ class _HomeScreenState extends State<HomeScreen> {
         foregroundColor: Colors.black,
         icon: const Icon(Icons.sync),
         label: const Text('Sincronizar'),
-        onPressed: _executarSincronizacaoInicial,
+        onPressed: _isOnline ? _executarSincronizacaoInicial : null,
       ),
     );
   }

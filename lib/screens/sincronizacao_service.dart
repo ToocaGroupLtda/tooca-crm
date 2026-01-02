@@ -42,6 +42,8 @@ class SincronizacaoService {
     if (raw.isEmpty) return {};
     try {
       return jsonDecode(raw);
+
+
     } catch (_) {
       return {};
     }
@@ -276,68 +278,60 @@ class SincronizacaoService {
     return _resolverLista(jsonSeguro(raw), 'condicoes');
   }
 
-  // ============================================================
-  // 📤 ENVIAR PEDIDOS PENDENTES (PROCESSAMENTO MULTI-EMPRESA)
-  // ============================================================
-  static Future<void> enviarPedidosPendentes(BuildContext context,
+  static Future<void> enviarPedidosPendentes(
+      BuildContext context,
       int usuarioId,
-      int empresaId,) async {
+      int empresaId,
+      ) async {
     final prefs = await SharedPreferences.getInstance();
-
-    // 🛡️ 1. BLOQUEIO IMEDIATO AO ENVIAR: Verifica local e servidor
-    if (!await empresaAtivaLocal() || !await consultarStatusEmpresa(empresaId)) {
-      return irParaBloqueio(
-        plano: prefs.getString('plano_empresa') ?? 'free',
-        expira: prefs.getString('empresa_expira') ?? '',
-      );
-    }
-
-    // ⚠️ 2. AVISO DE VENCIMENTO PRÓXIMO: Mostra SnackBar se faltar 5 dias ou menos
-    final String expiraStr = prefs.getString('empresa_expira') ?? '';
-    if (expiraStr.isNotEmpty && context.mounted) {
-      final DateTime? dataExpira = DateTime.tryParse(expiraStr);
-      if (dataExpira != null) {
-        final int diasRestantes = dataExpira.difference(DateTime.now()).inDays;
-        if (diasRestantes >= 0 && diasRestantes <= 5) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text("⚠️ Atenção: Seu plano vence em $diasRestantes dias ($expiraStr). Renove para não ser bloqueado!"),
-              backgroundColor: Colors.orange.shade900,
-              duration: const Duration(seconds: 4),
-            ),
-          );
-        }
-      }
-    }
-
     final chave = 'pedidos_pendentes_$empresaId';
     final fila = prefs.getStringList(chave) ?? <String>[];
 
-    // ✅ Se a fila estiver vazia, avisa o usuário e para aqui.
-    if (fila.isEmpty) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("✅ Tudo em dia! Nenhuma alteração pendente."),
-            backgroundColor: Colors.blueGrey,
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
-      return;
-    }
-
     int enviados = 0;
     int erros = 0;
-    List<String> filaAtualizada = List.from(fila);
 
-    for (String raw in fila) {
+    final filaAtualizada = List<String>.from(fila);
+
+    for (final raw in fila) {
       try {
         final registro = jsonDecode(raw);
-        // ... TODA A SUA LÓGICA ORIGINAL DE PROCESSAMENTO DE PEDIDOS E CLIENTES ...
-        // [Aqui o código continua com suas 380 linhas de regras de negócio originais]
-        // ...
-      } catch (_) {
+
+        final String tipo = registro['tipo'] ?? 'novo';
+        final Map<String, dynamic> dados =
+        Map<String, dynamic>.from(registro['dados'] ?? {});
+
+        // 🔒 Blindagem obrigatória
+        dados['usuario_id'] ??= usuarioId;
+        dados['empresa_id'] ??= empresaId;
+
+        // 🔥 UPDATE = TEM QUE TER pedido_id
+        if (tipo == 'update') {
+          final pid = registro['pedido_id'] ?? dados['pedido_id'];
+
+          if (pid != null && pid > 0) {
+            dados['pedido_id'] = pid;
+          } else {
+            debugPrint('❌ Update sem pedido_id — bloqueado');
+            erros++;
+            continue; // 🚫 NÃO ENVIA
+          }
+        }
+
+        final res = await http.post(
+          Uri.parse('https://toocagroup.com.br/api/criar_pedido.php'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(dados),
+        );
+
+        final resp = jsonSeguro(res.body);
+
+        if (res.statusCode == 200 && resp['status'] == 'ok') {
+          enviados++;
+          filaAtualizada.remove(raw); // ✅ remove da fila
+        } else {
+          erros++;
+        }
+      } catch (e) {
         erros++;
       }
     }
@@ -347,11 +341,11 @@ class SincronizacaoService {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-              "📤 Sincronizados: $enviados • Restantes: ${filaAtualizada.length}"),
-          backgroundColor: erros == 0 ? Colors.green : Colors.orange,
+          content: Text('Sincronização: $enviados enviados, $erros erros'),
         ),
       );
     }
   }
+
+
 }

@@ -78,6 +78,58 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
   List<dynamic> sugestoesClientes = [];
   late String planoAtual;
 
+  String normalizarProduto(String s) {
+    return s
+        .toLowerCase()
+        .replaceAll(RegExp(r'[áàâãä]'), 'a')
+        .replaceAll(RegExp(r'[éèêë]'), 'e')
+        .replaceAll(RegExp(r'[íìîï]'), 'i')
+        .replaceAll(RegExp(r'[óòôõö]'), 'o')
+        .replaceAll(RegExp(r'[úùûü]'), 'u')
+        .replaceAll(RegExp(r'[^a-z0-9]'), '');
+  }
+  void abrirFotoSegura(Map<String, dynamic> item) {
+
+    final codigo = item['codigo']?.toString() ?? '';
+    final nomeItem = item['nome']?.toString() ?? '';
+
+    if (codigo.isEmpty || nomeItem.isEmpty) {
+      _avisoFotoInvalida();
+      return;
+    }
+
+    // 🔍 procura produto offline pelo código
+    final produtoLocal = produtos.firstWhere(
+          (p) => p['codigo']?.toString() == codigo,
+      orElse: () => {},
+    );
+
+    if (produtoLocal.isEmpty) {
+      _avisoFotoInvalida();
+      return;
+    }
+
+    final nomeProduto = produtoLocal['nome']?.toString() ?? '';
+
+    // 🚨 TRAVA PRINCIPAL (igual ao PHP)
+    if (normalizarProduto(nomeProduto) != normalizarProduto(nomeItem)) {
+      _avisoFotoInvalida();
+      return;
+    }
+
+    // ✅ passou na validação → abre foto
+    abrirFotoOffline(codigo);
+  }
+
+  void _avisoFotoInvalida() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('⚠️ Foto indisponível para este item.'),
+        backgroundColor: Colors.orange,
+      ),
+    );
+  }
+
 
   // ===============================
 // 🔔 Overlay (Toast) de clientes
@@ -204,24 +256,30 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
   void initState() {
     super.initState();
 
-    // 🔐 PLANO DEFINITIVO DA TELA (UMA ÚNICA VEZ)
     planoAtual = widget.plano.toLowerCase().trim();
-
-    debugPrint('🧾 PLANO FINAL USADO NA TELA => $planoAtual');
-
     _isEditingExisting = widget.pedidoId != null;
 
     _connSub = Connectivity().onConnectivityChanged.listen((result) {
-      final online = (result != ConnectivityResult.none);
+      final online = result != ConnectivityResult.none;
       if (mounted && online != _isOnline) {
         setState(() => _isOnline = online);
       }
     });
 
     Connectivity().checkConnectivity().then((result) {
-      final online = (result != ConnectivityResult.none);
+      final online = result != ConnectivityResult.none;
       if (mounted) setState(() => _isOnline = online);
     });
+
+    // 🔥 DECISÃO CORRETA PRIMEIRO
+    if (widget.pedidoRascunho != null && widget.pedidoRascunho!.isNotEmpty) {
+      debugPrint('🟢 EDITANDO PEDIDO OFFLINE');
+      carregarDadosOffline().then((_) {
+        carregarDoRascunho(widget.pedidoRascunho!);
+        setState(() => carregando = false);
+      });
+      return;
+    }
 
     carregarDadosOffline();
   }
@@ -348,12 +406,12 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
 
 
     // --- Carregar pedido (existente, rascunho ou novo) ---
-    if (widget.pedidoId != null) {
-      // 🔥 SE FOR PEDIDO EXISTENTE → NÃO CARREGA RASCUNHO
+    if (widget.pedidoId != null && widget.pedidoRascunho == null && _isOnline) {
       await carregarPedidoExistente(widget.pedidoId!);
       setState(() => carregando = false);
       return;
     }
+
 
     if (widget.pedidoRascunho != null) {
       carregarDoRascunho(widget.pedidoRascunho!);
@@ -538,7 +596,10 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
             : null;
 
         // CAMPOS EXTRAS
-        descontoGeral = 0;
+        descontoGeral = double.tryParse(
+            '${pedido['desconto_geral'] ?? pedido['desconto']}'
+        ) ?? 0.0;
+
         obsCtrl.text = pedido['observacao'] ?? '';
 
         // ITENS
@@ -567,9 +628,10 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
               .toDouble()
               .clamp(0.0, 100.0);
 
-          final precoBase = (desc >= 100.0)
-              ? 0.0
-              : (precoFinal / (1 - (desc / 100)));
+          final precoBase = double.tryParse(
+              '${item['preco_base'] ?? item['preco_original'] ?? item['preco_unit']}'
+          ) ?? precoFinal;
+
 
           return {
             'produto_id': produtoId,
@@ -912,34 +974,45 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
 // =======================================================
 // 📸 FOTO OFFLINE — baixa e salva localmente
 // =======================================================
-  Future<File> _arquivoFotoLocal(String codigo) async {
+  Future<File> _arquivoFotoLocal(String nomeArquivo) async {
     final dir = await getApplicationDocumentsDirectory();
-    final pasta = Directory('${dir.path}/produtos');
+    final pasta = Directory('${dir.path}/produtos_${widget.empresaId}');
 
     if (!await pasta.exists()) {
       await pasta.create(recursive: true);
     }
 
-    return File('${pasta.path}/$codigo.jpg');
+    return File('${pasta.path}/$nomeArquivo');
   }
 
   Future<File?> baixarFotoProduto(String codigo) async {
-    try {
-      final arquivo = await _arquivoFotoLocal(codigo);
+    final urlMeta =
+        'https://toocagroup.com.br/api/foto_produto.php'
+        '?empresa_id=${widget.empresaId}&codigo=$codigo';
 
-      if (await arquivo.exists()) return arquivo;
-      if (!_isOnline) return null;
+    final resMeta = await http.get(Uri.parse(urlMeta));
+    final data = jsonDecode(resMeta.body);
 
-      final url = 'https://toocagroup.com.br/uploads/produtos/$codigo.jpg';
-      final res = await http.get(Uri.parse(url));
+    if (data['status'] != 'ok') return null;
 
-      if (res.statusCode == 200 && res.bodyBytes.isNotEmpty) {
-        await arquivo.writeAsBytes(res.bodyBytes);
-        return arquivo;
-      }
-    } catch (_) {}
+    final nomeArquivo = data['arquivo'];
+
+    final arquivoLocal = await _arquivoFotoLocal(nomeArquivo);
+    if (await arquivoLocal.exists()) return arquivoLocal;
+
+    final url =
+        'https://toocagroup.com.br/uploads/empresas/${widget.empresaId}/produtos/$nomeArquivo';
+
+    final res = await http.get(Uri.parse(url));
+    if (res.statusCode == 200) {
+      await arquivoLocal.writeAsBytes(res.bodyBytes);
+      return arquivoLocal;
+    }
+
     return null;
   }
+
+
 
   void abrirFotoOffline(String codigo) async {
     final arquivo = await baixarFotoProduto(codigo);
@@ -966,17 +1039,41 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
   }
 
 
+
   void aplicarDescontoGeral() {
+    // 🔒 REGRA: Excel / PDF não permitem desconto
+    if (_tabelaSelecionada == 'excel' || _tabelaSelecionada == 'pdf') {
+      setState(() {
+        for (var i = 0; i < itens.length; i++) {
+          // Apenas zera o desconto, SEM alterar o preço
+          itens[i]['desconto'] = 0.0;
+
+          // garante preco_base para consistência futura
+          if (itens[i]['preco_base'] == null) {
+            itens[i]['preco_base'] = (itens[i]['preco'] as num?)?.toDouble() ?? 0.0;
+          }
+        }
+      });
+
+      salvarRascunho();
+      return;
+    }
+
+    // ✅ Tabelas normais → aplica desconto geral
     setState(() {
       for (var i = 0; i < itens.length; i++) {
         final base = ((itens[i]['preco_base'] as num?)?.toDouble() ??
-            (itens[i]['preco'] as num?)?.toDouble() ?? 0.0);
+            (itens[i]['preco'] as num?)?.toDouble() ??
+            0.0);
+
         final dg = descontoGeral.clamp(0.0, 100.0);
-        itens[i]['preco_base'] = base; // garante presença
-        itens[i]['desconto']   = dg;   // sobrepõe o desconto do item pelo geral
-        itens[i]['preco']      = base * (1 - (dg / 100));
+
+        itens[i]['preco_base'] = base;
+        itens[i]['desconto'] = dg;
+        itens[i]['preco'] = base * (1 - (dg / 100));
       }
     });
+
     salvarRascunho();
   }
 
@@ -1042,19 +1139,22 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
             // 📸 NOVO: Ícone para abrir a foto no popup
             IconButton(
               icon: const Icon(Icons.camera_alt_outlined, color: Colors.blue),
+              tooltip: 'Ver Foto do Produto',
               onPressed: () {
-                final codigo = isEdit ? item!['codigo'] : produto!['codigo'];
-                if (codigo != null) {
-                  // Abre a foto usando o código do item/produto
-                  abrirFotoOffline(codigo.toString());
+                if (isEdit && item != null) {
+                  // 🔒 PASSA PELA TRAVA (código + descrição)
+                  abrirFotoSegura(item);
                 } else {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Código do produto indisponível.')),
+                    const SnackBar(
+                      content: Text('📷 Foto disponível apenas após adicionar o item.'),
+                      backgroundColor: Colors.orange,
+                    ),
                   );
                 }
               },
-              tooltip: 'Ver Foto do Produto',
             ),
+
           ],
         ),
         // -----------------------------------------------------------------
@@ -1205,10 +1305,12 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
 
     final fila = prefs.getStringList(chave) ?? <String>[];
 
+    // -------------------------------------------------
+    // 🔎 Resolve nomes para exibição offline
+    // -------------------------------------------------
     final clienteNomeSelecionado = (clientes.firstWhere(
           (c) => c['id'].toString() == (clienteId?.toString() ?? ''),
       orElse: () => <String, dynamic>{'nome': 'Cliente Offline'},
-
     )['nome'] ?? 'Cliente Offline');
 
     final tabelaNomeSelecionada = (tabelas.firstWhere(
@@ -1221,32 +1323,43 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
       orElse: () => {'nome': '---'},
     )['nome'] ?? '---');
 
+    // -------------------------------------------------
+    // 📦 DADOS COMPLETOS DO PEDIDO (FORMA CANÔNICA)
+    // -------------------------------------------------
     final dados = {
-      'pedido_id': widget.pedidoId,
-      'empresa_id': widget.empresaId, // 🔥 faltava
-      'plano': planoAtual
-      ,          // 🔥 faltava
-      'usuario_id': widget.usuarioId,
+      'pedido_id'     : widget.pedidoId,
+      'empresa_id'    : widget.empresaId,   // 🔥 obrigatório
+      'usuario_id'    : widget.usuarioId,
+      'plano'         : planoAtual,
 
-      'cliente_id': clienteId,
-      'cliente_nome': clienteNomeSelecionado,
-      'tabela_id': tabelaId,
-      'tabela': _tabelaSelecionada,
-      'tabela_nome': tabelaNomeSelecionada,
-      'cond_pagto_id': condicaoId,
-      'condicao_nome': condicaoNomeSelecionada,
-      'observacao': obsCtrl.text,
-      'itens': itens,
-      'total': calcularTotal(),
+      'cliente_id'    : clienteId,
+      'cliente_nome'  : clienteNomeSelecionado,
+
+      'tabela_id'     : tabelaId,
+      'tabela'        : _tabelaSelecionada,
+      'tabela_nome'   : tabelaNomeSelecionada,
+
+      'cond_pagto_id' : condicaoId,
+      'condicao_nome' : condicaoNomeSelecionada,
+
+      'observacao'    : obsCtrl.text,
+      'itens'         : itens,
+      'total'         : calcularTotal(),
     };
 
+    // -------------------------------------------------
+    // 🧾 REGISTRO OFFLINE (COM JSON BRUTO)
+    // -------------------------------------------------
     final registro = {
-      'tipo': 'update',
-      'pedido_id': widget.pedidoId,
-      'dados': dados,
-      'timestamp': DateTime.now().toIso8601String(),
+      'tipo'      : widget.pedidoId != null ? 'update' : 'novo',
+      'pedido_id' : widget.pedidoId,
+      'dados'     : dados,
+      'timestamp' : DateTime.now().toIso8601String(),
     };
 
+    // -------------------------------------------------
+    // 🔁 SUBSTITUI SE JÁ EXISTIR NA FILA
+    // -------------------------------------------------
     if (widget.filaIndex != null &&
         widget.filaIndex! >= 0 &&
         widget.filaIndex! < fila.length) {
@@ -1254,26 +1367,50 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
     } else {
       fila.add(jsonEncode(registro));
     }
+
     await prefs.setStringList(chave, fila);
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('💾 Edição salva offline. Será sincronizada quando voltar a conexão.')),
-    );
+    // -------------------------------------------------
+    // 🔥 SALVA JSON BRUTO PARA REABERTURA OFFLINE
+    // -------------------------------------------------
+    if (widget.pedidoId != null) {
+      await prefs.setString(
+        'pedido_offline_${widget.pedidoId}',
+        jsonEncode(registro),
+      );
 
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(
-        builder: (_) => HomeScreen(
-          usuarioId: widget.usuarioId,
-          empresaId: widget.empresaId,
-          plano: planoAtual
-          ,
-          email: '',
+      // 🔥 REMOVE CACHE ONLINE ANTIGO (evita conflito)
+      await prefs.remove('pedido_${widget.pedidoId}');
+    }
+
+    // -------------------------------------------------
+    // ✅ FEEDBACK AO USUÁRIO
+    // -------------------------------------------------
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('💾 Edição salva offline. Será sincronizada ao voltar a internet.'),
         ),
-      ),
-          (_) => false,
-    );
+      );
+    }
 
+    // -------------------------------------------------
+    // 🔁 VOLTA PARA HOME
+    // -------------------------------------------------
+    if (mounted) {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(
+          builder: (_) => HomeScreen(
+            usuarioId: widget.usuarioId,
+            empresaId: widget.empresaId,
+            plano: planoAtual,
+            email: '',
+          ),
+        ),
+            (_) => false,
+      );
+    }
   }
 
   Future<void> enviarPedido() async {
@@ -1719,23 +1856,33 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
                             labelText: 'Tabela de Preço',
                             isDense: true,
                           ),
-                          items: tabelas.map((t) {
-                            return DropdownMenuItem(
-                              value: '${t['id']}',
-                              child: Text('${t['nome']}'),
-                            );
-                          }).toList(),
+                          items: [
+
+                            // 🔢 TABELAS NORMAIS DO BANCO
+                            ...tabelas.map((t) {
+                              return DropdownMenuItem<String>(
+                                value: '${t['id']}',
+                                child: Text('${t['nome']}'),
+                              );
+                            }).toList(),
+                          ],
                           onChanged: (v) {
                             setState(() {
                               _tabelaSelecionada = v;
+
+                              // 👉 só converte para int se for numérico
                               tabelaId = int.tryParse(v ?? '');
                             });
-                            if (tabelaId != null) {
+
+                            // 🔒 REGRA: NÃO RECALCULA PREÇO PARA EXCEL / PDF
+                            if (tabelaId != null && v != 'excel' && v != 'pdf') {
                               recalcPrecosItensPorTabela(tabelaId);
                             }
+
                             salvarRascunho();
                           },
                         ),
+
                       ),
                       const SizedBox(width: 10),
                       Expanded(
@@ -2015,7 +2162,7 @@ class _NovoPedidoScreenState extends State<NovoPedidoScreen> {
                                 children: [
 
                                   GestureDetector(
-                                    onTap: () => abrirFotoOffline(item['codigo']),
+                                    onTap: () => abrirFotoSegura(item),
                                     child: Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                                       decoration: BoxDecoration(
